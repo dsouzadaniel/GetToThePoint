@@ -70,12 +70,29 @@ class BaselineSeq2Seq2wAttn(nn.Module):
                                   dim=2).squeeze(dim=1)
         return output_tensor
 
-    def forward(self, x: str) -> torch.Tensor:
+    def _decode_train(self, encoder_hidden_states):
+        pass
+
+
+    def forward(self, orig_text: str, **kwargs) -> torch.Tensor:
         # Embed the Doc with Elmo
-        doc_embedded_elmo = self._embed_doc(x)
+        doc_embedded_elmo = self._embed_doc(orig_text)
         # Encode with BiLSTM
         doc_embedded_elmo = doc_embedded_elmo.unsqueeze(dim=1)
         encoder_states = self._run_through_bilstm(doc_embedded_elmo, self.encoder)
+
+        # summ_text implies training
+        summ_text = kwargs.get('summ_text', None)
+
+        if summ_text:
+            # -> Training Loop
+            print("Training")
+            print(orig_text, summ_text)
+        else:
+            # -> Inference Loop
+            print("Testing")
+            print(orig_text)
+            pass
 
         return encoder_states
 
@@ -83,7 +100,10 @@ class BaselineSeq2Seq2wAttn(nn.Module):
 model = BaselineSeq2Seq2wAttn()
 
 input_text = "Hello World. This is great. I love NLP"
+output_text = "Hey I love NLP great world!"
 
-tensor = model(input_text)
+tensor = model(orig_text=input_text)
+print("Output Tensor Shape is :{0}".format(tensor.shape))
 
+tensor = model(orig_text=input_text, summ_text=output_text)
 print("Output Tensor Shape is :{0}".format(tensor.shape))
