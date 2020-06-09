@@ -9,11 +9,12 @@ nlp = spacy.load('en_core_web_sm')
 
 
 class BaselineSeq2Seq2wAttn(nn.Module):
-    def __init__(self, elmo_sent: bool = False):
+    def __init__(self, elmo_sent: bool = False, alignment_model: str = "dot_product"):
         super(BaselineSeq2Seq2wAttn, self).__init__()
 
         # Model Properties
         self.elmo_sent = elmo_sent
+        self.alignment_model = alignment_model
         self.randomize_init_hidden = True
 
         # Model Constants
@@ -27,6 +28,13 @@ class BaselineSeq2Seq2wAttn(nn.Module):
                                hidden_size=self.ELMO_EMBED_DIM,
                                num_layers=1,
                                bidirectional=True)
+
+        self.decoder = nn.LSTM(input_size=3 * self.ELMO_EMBED_DIM,
+                               hidden_size=2 * self.ELMO_EMBED_DIM,
+                               num_layers=1,
+                               bidirectional=False)
+
+        self.sm_dim0 = nn.Softmax(dim=0)
 
     def _elmo_embed_doc(self, doc_tokens: List[List[str]]) -> torch.Tensor:
         if not self.elmo_sent:
@@ -45,9 +53,14 @@ class BaselineSeq2Seq2wAttn(nn.Module):
             elmo_doc_feats = doc_elmo_embed['elmo_representations'][0][0]
         return elmo_doc_feats
 
-    def _embed_doc(self, doc: str) -> torch.Tensor:
+    def _embed_doc(self, doc: str, **kwargs) -> torch.Tensor:
         doc = nlp(doc)
         doc_tokens = [[token.text for token in sent] for sent in doc.sents]
+
+        prepend = kwargs.get('prepend', None)
+        if prepend:
+            doc_tokens[0] = prepend + doc_tokens[0]
+        print(doc_tokens)
         # Embed the Doc with Elmo
         doc_embedded_elmo = self._elmo_embed_doc(doc_tokens)
         return doc_embedded_elmo
@@ -70,28 +83,51 @@ class BaselineSeq2Seq2wAttn(nn.Module):
                                   dim=2).squeeze(dim=1)
         return output_tensor
 
-    def _decode_train(self, encoder_hidden_states):
-        pass
+    def _align(self, s, h, alignment_model="dot_product"):
+        if alignment_model == "dot_product":
+            e = torch.matmul(h, s)
+        return e
 
+    def _decoder_train(self, encoder_hidden_states, target_elmo):
+        _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
+        curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
+
+        curr_attn = self._align(s=curr_h.squeeze(), h=encoder_hidden_states, alignment_model=self.alignment_model)
+        curr_attn = self.sm_dim0(curr_attn)
+        curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
+
+        for curr_elmo in target_elmo:
+            curr_i = torch.cat((curr_ctxt, curr_elmo), dim=0).reshape(1, 1, -1)
+
+            curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
+
+            curr_attn = self._align(s=curr_h.squeeze(), h=encoder_hidden_states, alignment_model=self.alignment_model)
+            curr_attn = self.sm_dim0(curr_attn)
+            curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
+
+        print("Golly! ^_^ ")
+        return
 
     def forward(self, orig_text: str, **kwargs) -> torch.Tensor:
-        # Embed the Doc with Elmo
-        doc_embedded_elmo = self._embed_doc(orig_text)
+        # Embed the Orig with Elmo
+        orig_embedded_elmo = self._embed_doc(orig_text)
+
         # Encode with BiLSTM
-        doc_embedded_elmo = doc_embedded_elmo.unsqueeze(dim=1)
-        encoder_states = self._run_through_bilstm(doc_embedded_elmo, self.encoder)
+        orig_embedded_elmo.unsqueeze_(dim=1)
+        encoder_states = self._run_through_bilstm(orig_embedded_elmo, self.encoder)
 
         # summ_text implies training
         summ_text = kwargs.get('summ_text', None)
 
         if summ_text:
+            summ_embedded_elmo = self._embed_doc(summ_text, prepend=["<START>"])
             # -> Training Loop
             print("Training")
-            print(orig_text, summ_text)
+            self._decoder_train(encoder_states, summ_embedded_elmo)
+
         else:
             # -> Inference Loop
             print("Testing")
-            print(orig_text)
             pass
 
         return encoder_states
@@ -99,11 +135,11 @@ class BaselineSeq2Seq2wAttn(nn.Module):
 
 model = BaselineSeq2Seq2wAttn()
 
-input_text = "Hello World. This is great. I love NLP"
-output_text = "Hey I love NLP great world!"
+input_text = "Hello World. This is great. I love NLP!"
+output_text = "Hey great world! I love NLP"
 
-tensor = model(orig_text=input_text)
-print("Output Tensor Shape is :{0}".format(tensor.shape))
+# tensor = model(orig_text=input_text)
+# print("Output Tensor Shape is :{0}".format(tensor.shape))
 
 tensor = model(orig_text=input_text, summ_text=output_text)
-print("Output Tensor Shape is :{0}".format(tensor.shape))
+# print("Output Tensor Shape is :{0}".format(tensor.shape))
