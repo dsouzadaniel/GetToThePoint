@@ -67,10 +67,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
             elmo_doc_feats = doc_elmo_embed['elmo_representations'][0][0]
         return elmo_doc_feats
 
-    def _embed_doc(self, doc: str, **kwargs) -> torch.Tensor:
-        doc = nlp(doc)
-        doc_tokens = [[token.text for token in sent] for sent in doc.sents]
-
+    def _embed_doc(self, doc_tokens: str, **kwargs) -> torch.Tensor:
         prepend = kwargs.get('prepend', None)
         if prepend:
             doc_tokens[0] = prepend + doc_tokens[0]
@@ -106,13 +103,15 @@ class BaselineSeq2Seq2wAttn(nn.Module):
             e = torch.matmul(h, s.squeeze(dim=0))
         return e
 
-    def _decoder_train(self, encoder_hidden_states, target_elmo):
+    def _decoder_train(self, encoder_hidden_states, target_tokens):
         _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
         curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
 
         curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states, alignment_model=self.alignment_model)
         curr_attn = self.sm_dim0(curr_attn)
         curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
+
+        target_elmo = self._embed_doc(target_tokens, prepend=["<START>"])
 
         for curr_elmo in target_elmo:
             curr_i = torch.cat((curr_ctxt, curr_elmo), dim=0).reshape(1, 1, -1)
@@ -126,22 +125,21 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         print("Golly! ^_^ ")
         return
 
-    def forward(self, orig_text: str, **kwargs) -> torch.Tensor:
+    def forward(self, orig_text_tokens: List[List[str]], **kwargs) -> torch.Tensor:
         # Embed the Orig with Elmo
-        orig_embedded_elmo = self._embed_doc(orig_text)
+        orig_embedded_elmo = self._embed_doc(orig_text_tokens)
 
         # Encode with BiLSTM
         orig_embedded_elmo.unsqueeze_(dim=1)
         encoder_states = self._run_through_bilstm(orig_embedded_elmo, self.encoder)
 
         # summ_text implies training
-        summ_text = kwargs.get('summ_text', None)
+        summ_text_tokens = kwargs.get('summ_text_tokens', None)
 
-        if summ_text:
-            summ_embedded_elmo = self._embed_doc(summ_text, prepend=["<START>"])
+        if summ_text_tokens:
             # -> Training Loop
             print("Training")
-            self._decoder_train(encoder_states, summ_embedded_elmo)
+            self._decoder_train(encoder_states, summ_text_tokens)
         else:
             # -> Inference Loop
             print("Testing")
@@ -152,11 +150,20 @@ class BaselineSeq2Seq2wAttn(nn.Module):
 
 model = BaselineSeq2Seq2wAttn(alignment_model="additive")
 
+def tokenize_en(text:str):
+    doc = nlp(text)
+    doc_tokens = [[token.text for token in sent] for sent in doc.sents]
+    return doc_tokens
+
 input_text = "Hello World. This is great. I love NLP!"
 output_text = "Hey great world! I love NLP"
+
+input_text_tokens = tokenize_en(input_text)
+output_text_tokens = tokenize_en(output_text)
+
 
 # tensor = model(orig_text=input_text)
 # print("Output Tensor Shape is :{0}".format(tensor.shape))
 
-tensor = model(orig_text=input_text, summ_text=output_text)
+tensor = model(orig_text_tokens=input_text_tokens, summ_text_tokens=output_text_tokens)
 # print("Output Tensor Shape is :{0}".format(tensor.shape))
