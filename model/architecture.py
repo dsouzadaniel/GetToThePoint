@@ -34,7 +34,21 @@ class BaselineSeq2Seq2wAttn(nn.Module):
                                num_layers=1,
                                bidirectional=False)
 
+        self.Wh = nn.Linear(in_features=2*self.ELMO_EMBED_DIM,
+                            out_features=2*self.ELMO_EMBED_DIM,
+                            bias=False)
+        self.Ws = nn.Linear(in_features=2*self.ELMO_EMBED_DIM,
+                            out_features=2*self.ELMO_EMBED_DIM,
+                            bias=True)
+        self.v = nn.Linear(in_features=2*self.ELMO_EMBED_DIM,
+                           out_features=1,
+                           bias=False)
+
         self.sm_dim0 = nn.Softmax(dim=0)
+        self.tanh = nn.Tanh()
+
+
+
 
     def _elmo_embed_doc(self, doc_tokens: List[List[str]]) -> torch.Tensor:
         if not self.elmo_sent:
@@ -83,16 +97,20 @@ class BaselineSeq2Seq2wAttn(nn.Module):
                                   dim=2).squeeze(dim=1)
         return output_tensor
 
-    def _align(self, s, h, alignment_model="dot_product"):
-        if alignment_model == "dot_product":
-            e = torch.matmul(h, s)
+    def _align(self, s, h, alignment_model="additive"):
+        if alignment_model =="additive":
+            # Attention Alignment Model from Bahdanau et al(2015)
+            e = self.v(self.tanh(self.Wh(h)+self.Ws(s))).squeeze()
+        elif alignment_model == "dot_product":
+            # Attention Alignment Model from Luong et al(2015)
+            e = torch.matmul(h, s.squeeze(dim=0))
         return e
 
     def _decoder_train(self, encoder_hidden_states, target_elmo):
         _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
         curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
 
-        curr_attn = self._align(s=curr_h.squeeze(), h=encoder_hidden_states, alignment_model=self.alignment_model)
+        curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states, alignment_model=self.alignment_model)
         curr_attn = self.sm_dim0(curr_attn)
         curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
 
@@ -101,7 +119,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
 
             curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
 
-            curr_attn = self._align(s=curr_h.squeeze(), h=encoder_hidden_states, alignment_model=self.alignment_model)
+            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states, alignment_model=self.alignment_model)
             curr_attn = self.sm_dim0(curr_attn)
             curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
 
@@ -124,7 +142,6 @@ class BaselineSeq2Seq2wAttn(nn.Module):
             # -> Training Loop
             print("Training")
             self._decoder_train(encoder_states, summ_embedded_elmo)
-
         else:
             # -> Inference Loop
             print("Testing")
@@ -133,7 +150,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         return encoder_states
 
 
-model = BaselineSeq2Seq2wAttn()
+model = BaselineSeq2Seq2wAttn(alignment_model="additive")
 
 input_text = "Hello World. This is great. I love NLP!"
 output_text = "Hey great world! I love NLP"
