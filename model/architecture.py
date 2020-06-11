@@ -18,9 +18,12 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         self.randomize_init_hidden = True
 
         # Model Constants
+
         self.ELMO_EMBED_DIM = 256  # This will change if the ELMO options/weights change
         self.WEIGHTS_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_weights.hdf5"
         self.OPTIONS_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_options.json"
+
+        self.VOCAB_SIZE = 16*self.ELMO_EMBED_DIM
 
         # Model Layers
         self.elmo = Elmo(self.OPTIONS_FILE, self.WEIGHTS_FILE, 1)
@@ -47,8 +50,13 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         self.sm_dim0 = nn.Softmax(dim=0)
         self.tanh = nn.Tanh()
 
+        self.Vocab_Project_1 = nn.Linear(in_features=4*self.ELMO_EMBED_DIM,
+                                         out_features=8*self.ELMO_EMBED_DIM,
+                                         bias=True)
 
-
+        self.Vocab_Project_2 = nn.Linear(in_features=8*self.ELMO_EMBED_DIM,
+                                         out_features=self.VOCAB_SIZE,
+                                         bias=True)
 
     def _elmo_embed_doc(self, doc_tokens: List[List[str]]) -> torch.Tensor:
         if not self.elmo_sent:
@@ -122,6 +130,13 @@ class BaselineSeq2Seq2wAttn(nn.Module):
             curr_attn = self.sm_dim0(curr_attn)
             curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
 
+            # Output
+            state_ctxt_concat = torch.cat((curr_h.squeeze(), curr_ctxt))
+
+            vocab_projection = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
+
+            print("VOCAB_PROJECTION ->",vocab_projection.shape)
+
         print("Golly! ^_^ ")
         return
 
@@ -139,7 +154,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         if summ_text_tokens:
             # -> Training Loop
             print("Training")
-            self._decoder_train(encoder_states, summ_text_tokens)
+            loss = self._decoder_train(encoder_states, summ_text_tokens)
         else:
             # -> Inference Loop
             print("Testing")
@@ -155,15 +170,15 @@ def tokenize_en(text:str):
     doc_tokens = [[token.text for token in sent] for sent in doc.sents]
     return doc_tokens
 
-input_text = "Hello World. This is great. I love NLP!"
-output_text = "Hey great world! I love NLP"
+input_texts = ["Hello World. This is great. I love NLP!"]
+output_texts = ["Hey great world! I love NLP"]
 
-input_text_tokens = tokenize_en(input_text)
-output_text_tokens = tokenize_en(output_text)
+input_text_tokens = [tokenize_en(input_text) for input_text in input_texts]
+output_text_tokens = [tokenize_en(output_text) for output_text in output_texts]
 
 
 # tensor = model(orig_text=input_text)
 # print("Output Tensor Shape is :{0}".format(tensor.shape))
 
-tensor = model(orig_text_tokens=input_text_tokens, summ_text_tokens=output_text_tokens)
+tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
 # print("Output Tensor Shape is :{0}".format(tensor.shape))
