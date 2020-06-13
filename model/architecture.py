@@ -176,9 +176,5 @@ output_texts = ["Hey great world! I love NLP"]
 input_text_tokens = [tokenize_en(input_text) for input_text in input_texts]
 output_text_tokens = [tokenize_en(output_text) for output_text in output_texts]
 
-
-# tensor = model(orig_text=input_text)
-# print("Output Tensor Shape is :{0}".format(tensor.shape))
-
 tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
-# print("Output Tensor Shape is :{0}".format(tensor.shape))
+print("Output Tensor Shape is :{0}".format(tensor.shape))
