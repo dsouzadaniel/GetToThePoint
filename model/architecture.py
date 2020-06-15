@@ -9,13 +9,18 @@ nlp = spacy.load('en_core_web_sm')
 
 
 class BaselineSeq2Seq2wAttn(nn.Module):
-    def __init__(self, elmo_sent: bool = False, alignment_model: str = "dot_product"):
+    def __init__(self, vocab: List, elmo_sent: bool = False, alignment_model: str = "additive"):
         super(BaselineSeq2Seq2wAttn, self).__init__()
 
         # Model Properties
         self.elmo_sent = elmo_sent
         self.alignment_model = alignment_model
         self.randomize_init_hidden = True
+        self.vocab_2_ix = {k: v for k, v in zip(vocab, range(0, len(vocab)))}
+        self.ix_2_vocab = {k: v for k, v in zip(vocab, range(0, len(vocab)))}
+
+        self.map_vocab_2_ix = lambda p_t: [[self.vocab_2_ix[w_t] for w_t in s_t] for s_t in p_t]
+        self.map_ix_2_vocab = lambda p_i: [[self.ix_2_vocab[w_i] for w_i in s_i] for s_i in p_i]
 
         # Model Constants
 
@@ -23,7 +28,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         self.WEIGHTS_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_weights.hdf5"
         self.OPTIONS_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_options.json"
 
-        self.VOCAB_SIZE = 16*self.ELMO_EMBED_DIM
+        self.VOCAB_SIZE = 16 * self.ELMO_EMBED_DIM
 
         # Model Layers
         self.elmo = Elmo(self.OPTIONS_FILE, self.WEIGHTS_FILE, 1)
@@ -37,24 +42,24 @@ class BaselineSeq2Seq2wAttn(nn.Module):
                                num_layers=1,
                                bidirectional=False)
 
-        self.Wh = nn.Linear(in_features=2*self.ELMO_EMBED_DIM,
-                            out_features=2*self.ELMO_EMBED_DIM,
+        self.Wh = nn.Linear(in_features=2 * self.ELMO_EMBED_DIM,
+                            out_features=2 * self.ELMO_EMBED_DIM,
                             bias=False)
-        self.Ws = nn.Linear(in_features=2*self.ELMO_EMBED_DIM,
-                            out_features=2*self.ELMO_EMBED_DIM,
+        self.Ws = nn.Linear(in_features=2 * self.ELMO_EMBED_DIM,
+                            out_features=2 * self.ELMO_EMBED_DIM,
                             bias=True)
-        self.v = nn.Linear(in_features=2*self.ELMO_EMBED_DIM,
+        self.v = nn.Linear(in_features=2 * self.ELMO_EMBED_DIM,
                            out_features=1,
                            bias=False)
 
         self.sm_dim0 = nn.Softmax(dim=0)
         self.tanh = nn.Tanh()
 
-        self.Vocab_Project_1 = nn.Linear(in_features=4*self.ELMO_EMBED_DIM,
-                                         out_features=8*self.ELMO_EMBED_DIM,
+        self.Vocab_Project_1 = nn.Linear(in_features=4 * self.ELMO_EMBED_DIM,
+                                         out_features=8 * self.ELMO_EMBED_DIM,
                                          bias=True)
 
-        self.Vocab_Project_2 = nn.Linear(in_features=8*self.ELMO_EMBED_DIM,
+        self.Vocab_Project_2 = nn.Linear(in_features=8 * self.ELMO_EMBED_DIM,
                                          out_features=self.VOCAB_SIZE,
                                          bias=True)
 
@@ -103,9 +108,9 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         return output_tensor
 
     def _align(self, s, h, alignment_model="additive"):
-        if alignment_model =="additive":
+        if alignment_model == "additive":
             # Attention Alignment Model from Bahdanau et al(2015)
-            e = self.v(self.tanh(self.Wh(h)+self.Ws(s))).squeeze()
+            e = self.v(self.tanh(self.Wh(h) + self.Ws(s))).squeeze()
         elif alignment_model == "dot_product":
             # Attention Alignment Model from Luong et al(2015)
             e = torch.matmul(h, s.squeeze(dim=0))
@@ -126,7 +131,8 @@ class BaselineSeq2Seq2wAttn(nn.Module):
 
             curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
 
-            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states, alignment_model=self.alignment_model)
+            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states,
+                                    alignment_model=self.alignment_model)
             curr_attn = self.sm_dim0(curr_attn)
             curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
 
@@ -135,7 +141,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
 
             vocab_projection = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
 
-            print("VOCAB_PROJECTION ->",vocab_projection.shape)
+            print("VOCAB_PROJECTION ->", vocab_projection.shape)
 
         print("Golly! ^_^ ")
         return
@@ -165,10 +171,12 @@ class BaselineSeq2Seq2wAttn(nn.Module):
 
 model = BaselineSeq2Seq2wAttn(alignment_model="additive")
 
-def tokenize_en(text:str):
+
+def tokenize_en(text: str):
     doc = nlp(text)
     doc_tokens = [[token.text for token in sent] for sent in doc.sents]
     return doc_tokens
+
 
 input_texts = ["Hello World. This is great. I love NLP!"]
 output_texts = ["Hey great world! I love NLP"]
