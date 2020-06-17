@@ -16,8 +16,9 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         self.elmo_sent = elmo_sent
         self.alignment_model = alignment_model
         self.randomize_init_hidden = True
-        self.vocab_2_ix = {k: v for k, v in zip(vocab, range(0, len(vocab)))}
-        self.ix_2_vocab = {k: v for k, v in zip(vocab, range(0, len(vocab)))}
+        self.vocab = sorted(vocab)
+        self.vocab_2_ix = {k: v for k, v in zip(self.vocab, range(0, len(self.vocab)))}
+        self.ix_2_vocab = {v: k for k, v in self.vocab_2_ix.items()}
 
         self.map_vocab_2_ix = lambda p_t: [[self.vocab_2_ix[w_t] for w_t in s_t] for s_t in p_t]
         self.map_ix_2_vocab = lambda p_i: [[self.ix_2_vocab[w_i] for w_i in s_i] for s_i in p_i]
