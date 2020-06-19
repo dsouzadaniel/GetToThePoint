@@ -147,6 +147,40 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         print("Golly! ^_^ ")
         return
 
+    def _decoder_test(self,encoder_hidden_states,len_of_summary:int = 20):
+        _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
+        curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
+
+        curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states, alignment_model=self.alignment_model)
+        curr_attn = self.sm_dim0(curr_attn)
+        curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
+
+        collected_summary_tokens = ['<START>']
+
+        curr_elmo = self._embed_doc(doc_tokens=collected_summary_tokens)
+
+        for token_ix in range(len_of_summary):
+            curr_i = torch.cat((curr_ctxt, curr_elmo), dim=0).reshape(1, 1, -1)
+
+            curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
+
+            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states,
+                                    alignment_model=self.alignment_model)
+            curr_attn = self.sm_dim0(curr_attn)
+            curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
+
+            # Output
+            state_ctxt_concat = torch.cat((curr_h.squeeze(), curr_ctxt))
+
+            vocab_projection = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
+
+            curr_pred_token = self.ix_2_vocab[vocab_projection.argmax().item()]
+            collected_summary_tokens.append(curr_pred_token)
+
+            curr_elmo = self._embed_doc(collected_summary_tokens)
+
+        return collected_summary_tokens
+
     def forward(self, orig_text_tokens: List[List[str]], **kwargs) -> torch.Tensor:
         # Embed the Orig with Elmo
         orig_embedded_elmo = self._embed_doc(orig_text_tokens)
@@ -165,6 +199,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         else:
             # -> Inference Loop
             print("Testing")
+            pred_summ_text_tokens = self._decoder_test(encoder_states, len_of_summary=30)
             pass
 
         return encoder_states
