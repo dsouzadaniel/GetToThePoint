@@ -81,7 +81,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
             elmo_doc_feats = doc_elmo_embed['elmo_representations'][0][0]
         return elmo_doc_feats
 
-    def _embed_doc(self, doc_tokens: str, **kwargs) -> torch.Tensor:
+    def _embed_doc(self, doc_tokens: List[List[str]], **kwargs) -> torch.Tensor:
         prepend = kwargs.get('prepend', None)
         if prepend:
             doc_tokens[0] = prepend + doc_tokens[0]
@@ -147,7 +147,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         print("Golly! ^_^ ")
         return
 
-    def _decoder_test(self,encoder_hidden_states,len_of_summary:int = 20):
+    def _decoder_test(self, encoder_hidden_states, len_of_summary: int = 20):
         _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
         curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
 
@@ -155,7 +155,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         curr_attn = self.sm_dim0(curr_attn)
         curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
 
-        collected_summary_tokens = ['<START>']
+        collected_summary_tokens = [['<START>']]
 
         curr_elmo = self._embed_doc(doc_tokens=collected_summary_tokens)
 
@@ -175,9 +175,15 @@ class BaselineSeq2Seq2wAttn(nn.Module):
             vocab_projection = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
 
             curr_pred_token = self.ix_2_vocab[vocab_projection.argmax().item()]
-            collected_summary_tokens.append(curr_pred_token)
 
-            curr_elmo = self._embed_doc(collected_summary_tokens)
+            collected_summary_tokens[-1].append(curr_pred_token)
+
+            # Just get the Elmo Embedding of the Current Sentence
+            curr_elmo = self._embed_doc([collected_summary_tokens[-1]])
+
+            if curr_pred_token == '.':
+                # Start a New Line
+                collected_summary_tokens.append([])
 
         return collected_summary_tokens
 
