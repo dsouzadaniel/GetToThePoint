@@ -176,7 +176,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
 
             curr_pred_token = self.ix_2_vocab[vocab_projection.argmax().item()]
 
-            collected_summary_tokens[-1].append(curr_pred_token)
+            collected_summary_tokens[-1][-1].append(curr_pred_token)
 
             # Just get the Elmo Embedding of the Current Sentence
             curr_elmo = self._embed_doc([collected_summary_tokens[-1]])
