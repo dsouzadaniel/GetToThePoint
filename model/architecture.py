@@ -8,9 +8,9 @@ import spacy
 nlp = spacy.load('en_core_web_sm')
 
 
-class BaselineSeq2Seq2wAttn(nn.Module):
+class PointerGenerator(nn.Module):
     def __init__(self, vocab: List, elmo_sent: bool = False, alignment_model: str = "additive"):
-        super(BaselineSeq2Seq2wAttn, self).__init__()
+        super(PointerGenerator, self).__init__()
 
         # Model Properties
         self.elmo_sent = elmo_sent
@@ -211,7 +211,7 @@ class BaselineSeq2Seq2wAttn(nn.Module):
         return encoder_states
 
 
-model = BaselineSeq2Seq2wAttn(alignment_model="additive")
+model = PointerGenerator(alignment_model="additive")
 
 
 def tokenize_en(text: str):
