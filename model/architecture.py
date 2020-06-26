@@ -3,10 +3,17 @@ import torch
 import torch.nn as nn
 from allennlp.modules.elmo import Elmo, batch_to_ids
 
-import spacy
+import os
+import sys
+import time
+from pathlib import Path
 
-nlp = spacy.load('en_core_web_sm')
+sys.path.insert(0, str(Path().resolve()))
 
+# Project Imports
+from utils import constant, helper
+from data import loader
+from model import architecture
 
 class PointerGenerator(nn.Module):
     def __init__(self, vocab: List, elmo_sent: bool = False, alignment_model: str = "additive"):
@@ -214,17 +221,11 @@ class PointerGenerator(nn.Module):
 model = PointerGenerator(alignment_model="additive")
 
 
-def tokenize_en(text: str):
-    doc = nlp(text)
-    doc_tokens = [[token.text for token in sent] for sent in doc.sents]
-    return doc_tokens
-
-
 input_texts = ["Hello World. This is great. I love NLP!"]
 output_texts = ["Hey great world! I love NLP"]
 
-input_text_tokens = [tokenize_en(input_text) for input_text in input_texts]
-output_text_tokens = [tokenize_en(output_text) for output_text in output_texts]
+input_text_tokens = [helper.tokenize_en(input_text) for input_text in input_texts]
+output_text_tokens = [helper.tokenize_en(output_text) for output_text in output_texts]
 
 tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
 print("Output Tensor Shape is :{0}".format(tensor.shape))
