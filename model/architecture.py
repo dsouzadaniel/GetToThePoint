@@ -16,7 +16,13 @@ from data import loader
 from model import architecture
 
 class PointerGenerator(nn.Module):
-    def __init__(self, vocab: List, elmo_sent: bool = False, alignment_model: str = "additive"):
+    def __init__(self,
+                 vocab: List,
+                 elmo_weights_file: str,
+                 elmo_options_file: str,
+                 elmo_embed_dim: int,
+                 elmo_sent: bool = False,
+                 alignment_model: str = "additive"):
         super(PointerGenerator, self).__init__()
 
         # Model Properties
@@ -32,14 +38,12 @@ class PointerGenerator(nn.Module):
 
         # Model Constants
 
-        self.ELMO_EMBED_DIM = 256  # This will change if the ELMO options/weights change
-        self.WEIGHTS_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_weights.hdf5"
-        self.OPTIONS_FILE = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x1024_128_2048cnn_1xhighway/elmo_2x1024_128_2048cnn_1xhighway_options.json"
+        self.ELMO_EMBED_DIM = elmo_embed_dim  # This will change if the ELMO options/weights change
 
         self.VOCAB_SIZE = 16 * self.ELMO_EMBED_DIM
 
         # Model Layers
-        self.elmo = Elmo(self.OPTIONS_FILE, self.WEIGHTS_FILE, 1)
+        self.elmo = Elmo(elmo_options_file, elmo_weights_file, 1)
         self.encoder = nn.LSTM(input_size=self.ELMO_EMBED_DIM,
                                hidden_size=self.ELMO_EMBED_DIM,
                                num_layers=1,
@@ -218,7 +222,10 @@ class PointerGenerator(nn.Module):
         return encoder_states
 
 
-model = PointerGenerator(alignment_model="additive")
+model = PointerGenerator(alignment_model="additive",
+                         elmo_embed_dim=constant.ELMO_EMBED_DIM,
+                         elmo_weights_file=constant.ELMO_WEIGHTS_FILE,
+                         elmo_options_file=constant.ELMO_OPTIONS_FILE)
 
 
 input_texts = ["Hello World. This is great. I love NLP!"]
