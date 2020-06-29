@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from allennlp.modules.elmo import Elmo, batch_to_ids
 def spacy_tokenizer(doc):
     return [token.text for token in nlp(doc)]
 
+
 def tokenize_en(text: str, by_sent=True):
     doc = nlp(text)
     if by_sent:
@@ -27,15 +29,17 @@ def tokenize_en(text: str, by_sent=True):
         doc_tokens = [token.text for token in doc]
     return doc_tokens
 
+
 def get_n_most_common_words(texts, n=50):
     vec = CountVectorizer(max_features=n, tokenizer=spacy_tokenizer)
     vec.fit(texts)
     return vec.get_feature_names()
 
+
 dataset = loader.CNNLoader(path_to_csv=os.path.join(constant.DATASET_FOLDER, constant.TRAIN_FILE))
 texts = [dataset[i][0] for i in range(len(dataset))]
 
-init_vocab = get_n_most_common_words(texts, n=1024)
+init_vocab = get_n_most_common_words(texts, n=25)
 
 # Initialize Elmo for initial weights
 elmo = Elmo(constant.ELMO_OPTIONS_FILE, constant.ELMO_WEIGHTS_FILE, 1)
@@ -43,6 +47,16 @@ elmo = Elmo(constant.ELMO_OPTIONS_FILE, constant.ELMO_WEIGHTS_FILE, 1)
 init_vocab_ids = batch_to_ids([[w] for w in init_vocab])
 elmo_embeddings = elmo(init_vocab_ids)['elmo_representations'][0].squeeze()
 
-print(init_vocab_ids[:5])
-
 print(elmo_embeddings.shape)
+
+elmo_embeddings_np = elmo_embeddings.detach().numpy()
+
+# Save Vocab List
+with open('init_vocab_str.txt', mode='w') as f:
+    for w in init_vocab:
+        f.write(w + "\n")
+print("File:init_vocab_str.txt Written!")
+
+# Save Vocab Matrix
+np.save('init_vocab_vec.npy', elmo_embeddings_np)
+print("File:init_vocab_vec.npy Written!")
