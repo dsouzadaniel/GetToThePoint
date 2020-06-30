@@ -35,28 +35,28 @@ def get_n_most_common_words(texts, n=50):
     vec.fit(texts)
     return vec.get_feature_names()
 
-
-dataset = loader.CNNLoader(path_to_csv=os.path.join(constant.DATASET_FOLDER, constant.TRAIN_FILE))
-texts = [dataset[i][0] for i in range(len(dataset))]
-
-init_vocab = get_n_most_common_words(texts, n=25)
-
-# Initialize Elmo for initial weights
-elmo = Elmo(constant.ELMO_OPTIONS_FILE, constant.ELMO_WEIGHTS_FILE, 1)
-
-init_vocab_ids = batch_to_ids([[w] for w in init_vocab])
-elmo_embeddings = elmo(init_vocab_ids)['elmo_representations'][0].squeeze()
-
-print(elmo_embeddings.shape)
-
-elmo_embeddings_np = elmo_embeddings.detach().numpy()
-
-# Save Vocab List
-with open('init_vocab_str.txt', mode='w') as f:
-    for w in init_vocab:
-        f.write(w + "\n")
-print("File:init_vocab_str.txt Written!")
-
-# Save Vocab Matrix
-np.save('init_vocab_vec.npy', elmo_embeddings_np)
-print("File:init_vocab_vec.npy Written!")
+#
+# dataset = loader.CNNLoader(path_to_csv=os.path.join(constant.DATASET_FOLDER, constant.TRAIN_FILE))
+# texts = [dataset[i][0] for i in range(len(dataset))]
+#
+# init_vocab = get_n_most_common_words(texts, n=25)
+#
+# # Initialize Elmo for initial weights
+# elmo = Elmo(constant.ELMO_OPTIONS_FILE, constant.ELMO_WEIGHTS_FILE, 1)
+#
+# init_vocab_ids = batch_to_ids([[w] for w in init_vocab])
+# elmo_embeddings = elmo(init_vocab_ids)['elmo_representations'][0].squeeze()
+#
+# print(elmo_embeddings.shape)
+#
+# elmo_embeddings_np = elmo_embeddings.detach().numpy()
+#
+# # Save Vocab List
+# with open('init_vocab_str.txt', mode='w') as f:
+#     for w in init_vocab:
+#         f.write(w + "\n")
+# print("File:init_vocab_str.txt Written!")
+#
+# # Save Vocab Matrix
+# np.save('init_vocab_vec.npy', elmo_embeddings_np)
+# print("File:init_vocab_vec.npy Written!")

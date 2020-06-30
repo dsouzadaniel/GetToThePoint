@@ -10,11 +10,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path().resolve()))
 
-# Project Imports
-from utils import constant, helper
-from data import loader
-from model import architecture
-
 class PointerGenerator(nn.Module):
     def __init__(self,
                  vocab: List,
@@ -222,17 +217,24 @@ class PointerGenerator(nn.Module):
         return encoder_states
 
 
-model = PointerGenerator(alignment_model="additive",
-                         elmo_embed_dim=constant.ELMO_EMBED_DIM,
-                         elmo_weights_file=constant.ELMO_WEIGHTS_FILE,
-                         elmo_options_file=constant.ELMO_OPTIONS_FILE)
+# model = PointerGenerator(alignment_model="additive",
+#                          elmo_embed_dim=constant.ELMO_EMBED_DIM,
+#                          elmo_weights_file=constant.ELMO_WEIGHTS_FILE,
+#                          elmo_options_file=constant.ELMO_OPTIONS_FILE)
 
+vocab = []
+with open('init_vocab_str.txt') as f:
+    for line in f.readlines():
+        vocab.append(line.strip())
 
-input_texts = ["Hello World. This is great. I love NLP!"]
-output_texts = ["Hey great world! I love NLP"]
+print(vocab)
 
-input_text_tokens = [helper.tokenize_en(input_text) for input_text in input_texts]
-output_text_tokens = [helper.tokenize_en(output_text) for output_text in output_texts]
-
-tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
-print("Output Tensor Shape is :{0}".format(tensor.shape))
+#
+# input_texts = ["Hello World. This is great. I love NLP!"]
+# output_texts = ["Hey great world! I love NLP"]
+#
+# input_text_tokens = [helper.tokenize_en(input_text) for input_text in input_texts]
+# output_text_tokens = [helper.tokenize_en(output_text) for output_text in output_texts]
+#
+# tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
+# print("Output Tensor Shape is :{0}".format(tensor.shape))
