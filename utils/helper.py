@@ -5,6 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path().resolve()))
 
+# Project Imports
+from data import loader
+from utils import constant
 
 import spacy
 
@@ -32,12 +35,20 @@ def get_n_most_common_words(texts, n=50):
     vec.fit(texts)
     return vec.get_feature_names()
 
-#
+
 # dataset = loader.CNNLoader(path_to_csv=os.path.join(constant.DATASET_FOLDER, constant.TRAIN_FILE))
 # texts = [dataset[i][0] for i in range(len(dataset))]
 #
-# init_vocab = get_n_most_common_words(texts, n=25)
+# init_vocab = get_n_most_common_words(texts, n=512)
 #
+#
+# # Save Vocab List
+# with open('init_vocab_str.txt', mode='w') as f:
+#     for w in init_vocab:
+#         f.write(w + "\n")
+# print("File:init_vocab_str.txt Written!")
+
+
 # # Initialize Elmo for initial weights
 # elmo = Elmo(constant.ELMO_OPTIONS_FILE, constant.ELMO_WEIGHTS_FILE, 1)
 #
@@ -47,12 +58,7 @@ def get_n_most_common_words(texts, n=50):
 # print(elmo_embeddings.shape)
 #
 # elmo_embeddings_np = elmo_embeddings.detach().numpy()
-#
-# # Save Vocab List
-# with open('init_vocab_str.txt', mode='w') as f:
-#     for w in init_vocab:
-#         f.write(w + "\n")
-# print("File:init_vocab_str.txt Written!")
+
 #
 # # Save Vocab Matrix
 # np.save('init_vocab_vec.npy', elmo_embeddings_np)

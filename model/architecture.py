@@ -95,7 +95,7 @@ class PointerGenerator(nn.Module):
         prepend = kwargs.get('prepend', None)
         if prepend:
             doc_tokens[0] = prepend + doc_tokens[0]
-        print(doc_tokens)
+        # print(doc_tokens)
         # Embed the Doc with Elmo
         doc_embedded_elmo = self._elmo_embed_doc(doc_tokens)
         return doc_embedded_elmo
@@ -136,8 +136,10 @@ class PointerGenerator(nn.Module):
         # curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
 
         target_elmo = self._embed_doc(target_tokens, prepend=["<START>"])
+        target_summary = [i for j in target_tokens for i in j]
+        # print("TARGET ELMO SIZE ->", target_elmo.shape)
 
-        print("TARGET ELMO SIZE ->", target_elmo.shape)
+        collected_summary = []
 
         for curr_elmo in target_elmo:
             curr_i = curr_elmo.reshape(1, 1, -1)
@@ -156,9 +158,15 @@ class PointerGenerator(nn.Module):
             # Project to Vocabulary
             vocab_projection = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
 
-            print("VOCAB_PROJECTION ->", vocab_projection.shape)
+            # print("VOCAB_PROJECTION ->", vocab_projection.shape)
+            predicted_vocab_ix = vocab_projection.argmax(dim=0).item()
+            predicted_word = self.ix_2_vocab[predicted_vocab_ix]
+            # print("PREDICTED_WORD ->", predicted_word)
+            collected_summary.append(predicted_word)
 
-        print("Golly! ^_^ ")
+        print("GOLD_SUMMARY ->\n{0}".format(' '.join(target_summary)))
+        print("GENERATED_SUMMARY->\n{0}".format(' '.join(collected_summary)))
+        # print("Golly! ^_^ ")
         return
 
     def _decoder_test(self, encoder_hidden_states, len_of_summary: int = 20):
@@ -222,7 +230,7 @@ class PointerGenerator(nn.Module):
             pred_summ_text_tokens = self._decoder_test(encoder_states, len_of_summary=30)
             pass
 
-        return encoder_states
+        return None
 
 init_vocab = []
 with open('init_vocab_str.txt') as f:
@@ -243,4 +251,4 @@ input_text_tokens = [helper.tokenize_en(input_text) for input_text in input_text
 output_text_tokens = [helper.tokenize_en(output_text) for output_text in output_texts]
 
 tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
-print("Output Tensor Shape is :{0}".format(tensor.shape))
+# print("Output Tensor Shape is :{0}".format(tensor.shape))
