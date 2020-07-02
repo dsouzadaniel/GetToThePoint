@@ -5,9 +5,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path().resolve()))
 
-# Project Imports
-from data import loader
-from utils import constant
 
 import spacy
 

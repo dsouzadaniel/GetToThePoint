@@ -10,6 +10,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path().resolve()))
 
+# Project Imports
+from data import loader
+from utils import constant, helper
+
 class PointerGenerator(nn.Module):
     def __init__(self,
                  vocab: List,
@@ -35,7 +39,7 @@ class PointerGenerator(nn.Module):
 
         self.ELMO_EMBED_DIM = elmo_embed_dim  # This will change if the ELMO options/weights change
 
-        self.VOCAB_SIZE = 16 * self.ELMO_EMBED_DIM
+        self.VOCAB_SIZE = len(self.vocab)
 
         # Model Layers
         self.elmo = Elmo(elmo_options_file, elmo_weights_file, 1)
@@ -44,7 +48,7 @@ class PointerGenerator(nn.Module):
                                num_layers=1,
                                bidirectional=True)
 
-        self.decoder = nn.LSTM(input_size=3 * self.ELMO_EMBED_DIM,
+        self.decoder = nn.LSTM(input_size= self.ELMO_EMBED_DIM,
                                hidden_size=2 * self.ELMO_EMBED_DIM,
                                num_layers=1,
                                bidirectional=False)
@@ -126,26 +130,30 @@ class PointerGenerator(nn.Module):
     def _decoder_train(self, encoder_hidden_states, target_tokens):
         _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
         curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
-
-        curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states, alignment_model=self.alignment_model)
-        curr_attn = self.sm_dim0(curr_attn)
-        curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
+        #
+        # curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states, alignment_model=self.alignment_model)
+        # curr_attn = self.sm_dim0(curr_attn)
+        # curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
 
         target_elmo = self._embed_doc(target_tokens, prepend=["<START>"])
 
+        print("TARGET ELMO SIZE ->", target_elmo.shape)
+
         for curr_elmo in target_elmo:
-            curr_i = torch.cat((curr_ctxt, curr_elmo), dim=0).reshape(1, 1, -1)
+            curr_i = curr_elmo.reshape(1, 1, -1)
 
             curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
 
+            # Calculate Context Vector
             curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states,
                                     alignment_model=self.alignment_model)
             curr_attn = self.sm_dim0(curr_attn)
             curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
 
-            # Output
+            # Concatenate Context & Decoder Hidden State
             state_ctxt_concat = torch.cat((curr_h.squeeze(), curr_ctxt))
 
+            # Project to Vocabulary
             vocab_projection = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
 
             print("VOCAB_PROJECTION ->", vocab_projection.shape)
@@ -216,25 +224,23 @@ class PointerGenerator(nn.Module):
 
         return encoder_states
 
-
-# model = PointerGenerator(alignment_model="additive",
-#                          elmo_embed_dim=constant.ELMO_EMBED_DIM,
-#                          elmo_weights_file=constant.ELMO_WEIGHTS_FILE,
-#                          elmo_options_file=constant.ELMO_OPTIONS_FILE)
-
-vocab = []
+init_vocab = []
 with open('init_vocab_str.txt') as f:
     for line in f.readlines():
-        vocab.append(line.strip())
+        init_vocab.append(line.strip())
 
-print(vocab)
 
-#
-# input_texts = ["Hello World. This is great. I love NLP!"]
-# output_texts = ["Hey great world! I love NLP"]
-#
-# input_text_tokens = [helper.tokenize_en(input_text) for input_text in input_texts]
-# output_text_tokens = [helper.tokenize_en(output_text) for output_text in output_texts]
-#
-# tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
-# print("Output Tensor Shape is :{0}".format(tensor.shape))
+model = PointerGenerator(vocab=init_vocab,
+                         alignment_model="additive",
+                         elmo_embed_dim=constant.ELMO_EMBED_DIM,
+                         elmo_weights_file=constant.ELMO_WEIGHTS_FILE,
+                         elmo_options_file=constant.ELMO_OPTIONS_FILE)
+
+input_texts = ["Hello World. This is great. I love NLP!"]
+output_texts = ["Hey great world! I love NLP"]
+
+input_text_tokens = [helper.tokenize_en(input_text) for input_text in input_texts]
+output_text_tokens = [helper.tokenize_en(output_text) for output_text in output_texts]
+
+tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
+print("Output Tensor Shape is :{0}".format(tensor.shape))
