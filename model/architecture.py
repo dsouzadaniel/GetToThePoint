@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path().resolve()))
 from data import loader
 from utils import constant, helper
 
+
 class PointerGenerator(nn.Module):
     def __init__(self,
                  vocab: List,
@@ -48,7 +49,7 @@ class PointerGenerator(nn.Module):
                                num_layers=1,
                                bidirectional=True)
 
-        self.decoder = nn.LSTM(input_size= self.ELMO_EMBED_DIM,
+        self.decoder = nn.LSTM(input_size=self.ELMO_EMBED_DIM,
                                hidden_size=2 * self.ELMO_EMBED_DIM,
                                num_layers=1,
                                bidirectional=False)
@@ -133,19 +134,41 @@ class PointerGenerator(nn.Module):
             e = torch.matmul(h, s.squeeze(dim=0))
         return e
 
-    def _decoder_train(self, encoder_hidden_states, target_tokens):
+    def _decoder_train(self, encoder_hidden_states, src_tokens, tgt_tokens):
         _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
         curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
 
-        target_elmo = self._embed_doc(target_tokens, prepend_START=True)
-        target_summary = [i for j in target_tokens for i in j]
+        tgt_elmo = self._embed_doc(tgt_tokens, prepend_START=True)
+
+        flat_tgt_tokens = [i for j in tgt_tokens for i in j]
+        flat_src_tokens = [i for j in src_tokens for i in j]
+
+        assert len(flat_src_tokens) == encoder_hidden_states.shape[0]
+
+        print(flat_src_tokens[:5])
+
+        new_words = sorted([w for w in flat_tgt_tokens if w not in self.vocab])
+
+        extended_vocab = self.vocab + new_words
+        extended_vocab_2_ix = {**self.vocab_2_ix, **{w: ix for w, ix in zip(new_words, range(
+            len(self.vocab), len(extended_vocab)))}}
+        extended_ix_2_vocab = {v: k for k, v in extended_vocab_2_ix.items()}
+
+        assert len(extended_vocab) == len(extended_vocab_2_ix) == len(extended_ix_2_vocab)
+
+        # [1:] to align because of the <START> token
+        gold_vocab_ixs = torch.LongTensor([extended_vocab_2_ix[w] for w in flat_tgt_tokens[1:]])
+
+        print("NEW WORDS ->{0}".format(new_words))
 
         collected_summary = []
 
         # To calculate loss
-        predicted_vocab_projections = []
+        collect_xtnd_vocab_prjtns = []
 
-        for curr_elmo in target_elmo:
+        for curr_elmo in tgt_elmo:
+            p_vocab = torch.zeros(size=(1, len(extended_vocab)))
+            p_attn = torch.zeros(size=(1, len(extended_vocab)))
 
             curr_i = curr_elmo.reshape(1, 1, -1)
 
@@ -161,8 +184,14 @@ class PointerGenerator(nn.Module):
             state_ctxt_concat = torch.cat((curr_h.squeeze(), curr_ctxt))
 
             # Project to Vocabulary
-            vocab_projection = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
-            predicted_vocab_projections.append(vocab_projection)
+            vocab_prjtn = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
+
+            # print("PUT ->{0}".format(p_vocab.shape))
+            # print("INTO ->{0}".format(vocab_prjtn.shape))
+
+            p_vocab[:, :self.VOCAB_SIZE] = vocab_prjtn
+
+            # print(p_vocab)
 
             # print("VOCAB_PROJECTION ->", vocab_projection.shape)
             predicted_vocab_ix = vocab_projection.argmax(dim=0).item()
@@ -170,12 +199,9 @@ class PointerGenerator(nn.Module):
             # print("PREDICTED_WORD ->", predicted_word)
             collected_summary.append(predicted_word)
 
+            collect_xtnd_vocab_prjtns.append()
+
         predicted_vocab_projections = torch.stack(predicted_vocab_projections, dim=0)
-
-        flattened_target_tokens = [i for j in target_tokens for i in j]
-
-        # [:-1] because you aready have a <START> at the beginning
-        gold_vocab_ixs = torch.LongTensor([self.vocab_2_ix[w] for w in flattened_target_tokens[:-1]])
 
         print("X ->{0}".format(predicted_vocab_projections.shape))
         print("Y ->{0}".format(gold_vocab_ixs.shape))
@@ -238,7 +264,7 @@ class PointerGenerator(nn.Module):
         if summ_text_tokens:
             # -> Training Loop
             print("Training")
-            loss = self._decoder_train(encoder_states, summ_text_tokens)
+            loss = self._decoder_train(encoder_states, orig_text_tokens, summ_text_tokens)
         else:
             # -> Inference Loop
             print("Testing")
@@ -247,11 +273,11 @@ class PointerGenerator(nn.Module):
 
         return None
 
+
 init_vocab = []
 with open('init_vocab_str.txt') as f:
     for line in f.readlines():
         init_vocab.append(line.strip())
-
 
 model = PointerGenerator(vocab=init_vocab,
                          alignment_model="additive",
@@ -262,8 +288,8 @@ model = PointerGenerator(vocab=init_vocab,
 input_texts = ["Hello World. This is great. I love NLP!"]
 output_texts = ["Hey great world! I love NLP"]
 
-input_text_tokens = [helper.tokenize_en(input_text) for input_text in input_texts]
-output_text_tokens = [helper.tokenize_en(output_text) for output_text in output_texts]
+input_text_tokens = [helper.tokenize_en(input_text, lowercase=True) for input_text in input_texts]
+output_text_tokens = [helper.tokenize_en(output_text, lowercase=True) for output_text in output_texts]
 
 tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
 # print("Output Tensor Shape is :{0}".format(tensor.shape))
