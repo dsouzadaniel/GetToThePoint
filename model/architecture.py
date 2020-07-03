@@ -92,12 +92,14 @@ class PointerGenerator(nn.Module):
         return elmo_doc_feats
 
     def _embed_doc(self, doc_tokens: List[List[str]], **kwargs) -> torch.Tensor:
-        prepend = kwargs.get('prepend', None)
-        if prepend:
-            doc_tokens[0] = prepend + doc_tokens[0]
-        # print(doc_tokens)
         # Embed the Doc with Elmo
         doc_embedded_elmo = self._elmo_embed_doc(doc_tokens)
+
+        prepend = kwargs.get('prepend_START', None)
+        if prepend:
+            start_token_elmo = self._elmo_embed_doc([['<START>']])
+            doc_embedded_elmo = torch.cat((start_token_elmo, doc_embedded_elmo), dim=0)
+
         return doc_embedded_elmo
 
     def _init_bi_hidden(self, batch_size: int = 1, num_layers: int = 1):
@@ -130,14 +132,9 @@ class PointerGenerator(nn.Module):
     def _decoder_train(self, encoder_hidden_states, target_tokens):
         _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
         curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
-        #
-        # curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states, alignment_model=self.alignment_model)
-        # curr_attn = self.sm_dim0(curr_attn)
-        # curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
 
-        target_elmo = self._embed_doc(target_tokens, prepend=["<START>"])
+        target_elmo = self._embed_doc(target_tokens, prepend_START=True)
         target_summary = [i for j in target_tokens for i in j]
-        # print("TARGET ELMO SIZE ->", target_elmo.shape)
 
         collected_summary = []
 
