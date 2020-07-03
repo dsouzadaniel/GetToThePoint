@@ -21,12 +21,15 @@ def spacy_tokenizer(doc):
     return [token.text for token in nlp(doc)]
 
 
-def tokenize_en(text: str, by_sent=True):
+def tokenize_en(text: str, by_sent=True, lowercase=True):
     doc = nlp(text)
+
     if by_sent:
-        doc_tokens = [[token.text for token in sent] for sent in doc.sents]
+        doc_tokens = [[token.text.lower() if lowercase else token.text for token in sent] for sent in doc.sents]
     else:
-        doc_tokens = [token.text for token in doc]
+        doc_tokens = [token.text.lower() if lowercase else token.text for token in doc]
+
+
     return doc_tokens
 
 

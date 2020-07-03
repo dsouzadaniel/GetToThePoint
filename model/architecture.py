@@ -95,10 +95,14 @@ class PointerGenerator(nn.Module):
         # Embed the Doc with Elmo
         doc_embedded_elmo = self._elmo_embed_doc(doc_tokens)
 
+        print("Pre Doc Shape -> {0}".format(doc_embedded_elmo.shape))
+
         prepend = kwargs.get('prepend_START', None)
         if prepend:
             start_token_elmo = self._elmo_embed_doc([['<START>']])
-            doc_embedded_elmo = torch.cat((start_token_elmo, doc_embedded_elmo), dim=0)
+            doc_embedded_elmo = torch.cat((start_token_elmo, doc_embedded_elmo[:-1]), dim=0)
+
+        print("Post Doc Shape -> {0}".format(doc_embedded_elmo.shape))
 
         return doc_embedded_elmo
 
@@ -138,7 +142,11 @@ class PointerGenerator(nn.Module):
 
         collected_summary = []
 
+        # To calculate loss
+        predicted_vocab_projections = []
+
         for curr_elmo in target_elmo:
+
             curr_i = curr_elmo.reshape(1, 1, -1)
 
             curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
@@ -154,6 +162,7 @@ class PointerGenerator(nn.Module):
 
             # Project to Vocabulary
             vocab_projection = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
+            predicted_vocab_projections.append(vocab_projection)
 
             # print("VOCAB_PROJECTION ->", vocab_projection.shape)
             predicted_vocab_ix = vocab_projection.argmax(dim=0).item()
@@ -161,9 +170,18 @@ class PointerGenerator(nn.Module):
             # print("PREDICTED_WORD ->", predicted_word)
             collected_summary.append(predicted_word)
 
+        predicted_vocab_projections = torch.stack(predicted_vocab_projections, dim=0)
+
+        flattened_target_tokens = [i for j in target_tokens for i in j]
+
+        # [:-1] because you aready have a <START> at the beginning
+        gold_vocab_ixs = torch.LongTensor([self.vocab_2_ix[w] for w in flattened_target_tokens[:-1]])
+
+        print("X ->{0}".format(predicted_vocab_projections.shape))
+        print("Y ->{0}".format(gold_vocab_ixs.shape))
+
         print("GOLD_SUMMARY ->\n{0}".format(' '.join(target_summary)))
         print("GENERATED_SUMMARY->\n{0}".format(' '.join(collected_summary)))
-        # print("Golly! ^_^ ")
         return
 
     def _decoder_test(self, encoder_hidden_states, len_of_summary: int = 20):
