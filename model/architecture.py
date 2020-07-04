@@ -66,6 +66,7 @@ class PointerGenerator(nn.Module):
 
         self.sm_dim0 = nn.Softmax(dim=0)
         self.tanh = nn.Tanh()
+        self.sigmoid = nn.Sigmoid()
 
         self.Vocab_Project_1 = nn.Linear(in_features=4 * self.ELMO_EMBED_DIM,
                                          out_features=8 * self.ELMO_EMBED_DIM,
@@ -74,6 +75,10 @@ class PointerGenerator(nn.Module):
         self.Vocab_Project_2 = nn.Linear(in_features=8 * self.ELMO_EMBED_DIM,
                                          out_features=self.VOCAB_SIZE,
                                          bias=True)
+
+        self.Wh_pgen = nn.Linear(in_features=2 * self.ELMO_EMBED_DIM, out_features=1, bias=False)
+        self.Ws_pgen = nn.Linear(in_features=2 * self.ELMO_EMBED_DIM, out_features=1, bias=False)
+        self.Wx_pgen = nn.Linear(in_features=self.ELMO_EMBED_DIM, out_features=1, bias=True)
 
     def _elmo_embed_doc(self, doc_tokens: List[List[str]]) -> torch.Tensor:
         if not self.elmo_sent:
@@ -193,11 +198,19 @@ class PointerGenerator(nn.Module):
             for src_word, src_attn in zip(flat_src_tokens, curr_attn):
                 p_attn[:, extended_vocab_2_ix[src_word]] += src_attn
 
-            print(p_attn)
+            p_gen = self.sigmoid(
+                self.Wh_pgen(curr_ctxt) + self.Ws_pgen(curr_h.squeeze()) + self.Wx_pgen(curr_i.squeeze()))
 
-            print("SRC ATTN ->",curr_attn)
+            # x_1 = p_vocab
+            # x_2 = p_gen * p_vocab + (1 - p_gen) * p_vocab
 
-            break
+            # print(x_1[:, :10])
+            # print(x_2[:, :10])
+            #
+            # print(x_1[:, -10:])
+            # print(x_2[:, -10:])
+
+            # print("EQUAL -> {0}".format(torch.equal(input=x_1, other=x_2)))
 
             # print("ATTN SHAPE ->{0}".format(curr_attn.shape))
             # print("WORD SHAPE ->{0}".format(len(flat_src_tokens)))
