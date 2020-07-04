@@ -140,14 +140,14 @@ class PointerGenerator(nn.Module):
 
         tgt_elmo = self._embed_doc(tgt_tokens, prepend_START=True)
 
-        flat_tgt_tokens = [i for j in tgt_tokens for i in j]
         flat_src_tokens = [i for j in src_tokens for i in j]
+        flat_tgt_tokens = [i for j in tgt_tokens for i in j]
 
         assert len(flat_src_tokens) == encoder_hidden_states.shape[0]
 
         print(flat_src_tokens[:5])
 
-        new_words = sorted([w for w in flat_tgt_tokens if w not in self.vocab])
+        new_words = sorted([w for w in flat_src_tokens if w not in self.vocab])
 
         extended_vocab = self.vocab + new_words
         extended_vocab_2_ix = {**self.vocab_2_ix, **{w: ix for w, ix in zip(new_words, range(
@@ -186,11 +186,21 @@ class PointerGenerator(nn.Module):
             # Project to Vocabulary
             vocab_prjtn = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
 
-            # print("PUT ->{0}".format(p_vocab.shape))
+            # print("ATTN ->{0}".format(curr_attn.shape))
             # print("INTO ->{0}".format(vocab_prjtn.shape))
 
             p_vocab[:, :self.VOCAB_SIZE] = vocab_prjtn
+            for src_word, src_attn in zip(flat_src_tokens, curr_attn):
+                p_attn[:, extended_vocab_2_ix[src_word]] += src_attn
 
+            print(p_attn)
+
+            print("SRC ATTN ->",curr_attn)
+
+            break
+
+            # print("ATTN SHAPE ->{0}".format(curr_attn.shape))
+            # print("WORD SHAPE ->{0}".format(len(flat_src_tokens)))
             # print(p_vocab)
 
             # print("VOCAB_PROJECTION ->", vocab_projection.shape)
@@ -285,8 +295,8 @@ model = PointerGenerator(vocab=init_vocab,
                          elmo_weights_file=constant.ELMO_WEIGHTS_FILE,
                          elmo_options_file=constant.ELMO_OPTIONS_FILE)
 
-input_texts = ["Hello World. This is great. I love NLP!"]
-output_texts = ["Hey great world! I love NLP"]
+input_texts = ["Hello World. This is a great world. I love NLP!"]
+output_texts = ["Hello World! I love NLP"]
 
 input_text_tokens = [helper.tokenize_en(input_text, lowercase=True) for input_text in input_texts]
 output_text_tokens = [helper.tokenize_en(output_text, lowercase=True) for output_text in output_texts]
