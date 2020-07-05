@@ -35,7 +35,8 @@ def tokenize_en(text: str, by_sent=True, lowercase=False):
 def get_n_most_common_words(texts, n=50):
     vec = CountVectorizer(max_features=n, tokenizer=spacy_tokenizer)
     vec.fit(texts)
-    return vec.get_feature_names()
+    vocab = ['<UNK>']+vec.get_feature_names()
+    return vocab
 
 
 # dataset = loader.CNNLoader(path_to_csv=os.path.join(constant.DATASET_FOLDER, constant.TRAIN_FILE))

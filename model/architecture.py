@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path().resolve()))
 from data import loader
 from utils import constant, helper
 
+loss_fn = nn.CrossEntropyLoss()
+
 
 class PointerGenerator(nn.Module):
     def __init__(self,
@@ -100,15 +102,15 @@ class PointerGenerator(nn.Module):
     def _embed_doc(self, doc_tokens: List[List[str]], **kwargs) -> torch.Tensor:
         # Embed the Doc with Elmo
         doc_embedded_elmo = self._elmo_embed_doc(doc_tokens)
-
-        print("Pre Doc Shape -> {0}".format(doc_embedded_elmo.shape))
+        #
+        # print("Pre Doc Shape -> {0}".format(doc_embedded_elmo.shape))
 
         prepend = kwargs.get('prepend_START', None)
         if prepend:
             start_token_elmo = self._elmo_embed_doc([['<START>']])
             doc_embedded_elmo = torch.cat((start_token_elmo, doc_embedded_elmo[:-1]), dim=0)
 
-        print("Post Doc Shape -> {0}".format(doc_embedded_elmo.shape))
+        # print("Post Doc Shape -> {0}".format(doc_embedded_elmo.shape))
 
         return doc_embedded_elmo
 
@@ -139,8 +141,8 @@ class PointerGenerator(nn.Module):
             e = torch.matmul(h, s.squeeze(dim=0))
         return e
 
-    def _decoder_train(self, encoder_hidden_states, src_tokens, tgt_tokens):
-        _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
+    def _decoder_train(self, encoder_states, src_tokens, tgt_tokens):
+        _init_probe = encoder_states[-1].reshape(1, 1, -1)
         curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
 
         tgt_elmo = self._embed_doc(tgt_tokens, prepend_START=True)
@@ -148,11 +150,9 @@ class PointerGenerator(nn.Module):
         flat_src_tokens = [i for j in src_tokens for i in j]
         flat_tgt_tokens = [i for j in tgt_tokens for i in j]
 
-        assert len(flat_src_tokens) == encoder_hidden_states.shape[0]
+        assert len(flat_src_tokens) == encoder_states.shape[0]
 
-        print(flat_src_tokens[:5])
-
-        new_words = sorted([w for w in flat_src_tokens if w not in self.vocab])
+        new_words = sorted(list(set([w for w in flat_src_tokens if w not in self.vocab])))
 
         extended_vocab = self.vocab + new_words
         extended_vocab_2_ix = {**self.vocab_2_ix, **{w: ix for w, ix in zip(new_words, range(
@@ -161,12 +161,7 @@ class PointerGenerator(nn.Module):
 
         assert len(extended_vocab) == len(extended_vocab_2_ix) == len(extended_ix_2_vocab)
 
-        # [1:] to align because of the <START> token
-        gold_vocab_ixs = torch.LongTensor([extended_vocab_2_ix[w] for w in flat_tgt_tokens[1:]])
-
-        print("NEW WORDS ->{0}".format(new_words))
-
-        collected_summary = []
+        gold_vocab_ixs = torch.LongTensor([extended_vocab_2_ix.get(w, constant.UNK_TOK_IX) for w in flat_tgt_tokens])
 
         # To calculate loss
         collect_xtnd_vocab_prjtns = []
@@ -176,24 +171,19 @@ class PointerGenerator(nn.Module):
             p_attn = torch.zeros(size=(1, len(extended_vocab)))
 
             curr_i = curr_elmo.reshape(1, 1, -1)
-
             curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
 
             # Calculate Context Vector
-            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states,
+            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_states,
                                     alignment_model=self.alignment_model)
             curr_attn = self.sm_dim0(curr_attn)
-            curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
+            curr_ctxt = torch.matmul(curr_attn, encoder_states)
 
             # Concatenate Context & Decoder Hidden State
             state_ctxt_concat = torch.cat((curr_h.squeeze(), curr_ctxt))
 
             # Project to Vocabulary
             vocab_prjtn = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
-
-            # print("ATTN ->{0}".format(curr_attn.shape))
-            # print("INTO ->{0}".format(vocab_prjtn.shape))
-
             p_vocab[:, :self.VOCAB_SIZE] = vocab_prjtn
             for src_word, src_attn in zip(flat_src_tokens, curr_attn):
                 p_attn[:, extended_vocab_2_ix[src_word]] += src_attn
@@ -201,77 +191,76 @@ class PointerGenerator(nn.Module):
             p_gen = self.sigmoid(
                 self.Wh_pgen(curr_ctxt) + self.Ws_pgen(curr_h.squeeze()) + self.Wx_pgen(curr_i.squeeze()))
 
-            # x_1 = p_vocab
-            # x_2 = p_gen * p_vocab + (1 - p_gen) * p_vocab
+            p_W = p_gen * p_vocab + (1 - p_gen) * p_attn
+            collect_xtnd_vocab_prjtns.append(p_W)
 
-            # print(x_1[:, :10])
-            # print(x_2[:, :10])
-            #
-            # print(x_1[:, -10:])
-            # print(x_2[:, -10:])
+        collect_xtnd_vocab_prjtns = torch.cat(collect_xtnd_vocab_prjtns, dim=0)
+        return gold_vocab_ixs, collect_xtnd_vocab_prjtns
 
-            # print("EQUAL -> {0}".format(torch.equal(input=x_1, other=x_2)))
-
-            # print("ATTN SHAPE ->{0}".format(curr_attn.shape))
-            # print("WORD SHAPE ->{0}".format(len(flat_src_tokens)))
-            # print(p_vocab)
-
-            # print("VOCAB_PROJECTION ->", vocab_projection.shape)
-            predicted_vocab_ix = vocab_projection.argmax(dim=0).item()
-            predicted_word = self.ix_2_vocab[predicted_vocab_ix]
-            # print("PREDICTED_WORD ->", predicted_word)
-            collected_summary.append(predicted_word)
-
-            collect_xtnd_vocab_prjtns.append()
-
-        predicted_vocab_projections = torch.stack(predicted_vocab_projections, dim=0)
-
-        print("X ->{0}".format(predicted_vocab_projections.shape))
-        print("Y ->{0}".format(gold_vocab_ixs.shape))
-
-        print("GOLD_SUMMARY ->\n{0}".format(' '.join(target_summary)))
-        print("GENERATED_SUMMARY->\n{0}".format(' '.join(collected_summary)))
-        return
-
-    def _decoder_test(self, encoder_hidden_states, len_of_summary: int = 20):
-        _init_probe = encoder_hidden_states[-1].reshape(1, 1, -1)
+    def _decoder_test(self, encoder_states, src_tokens, len_of_summary: int = 20):
+        _init_probe = encoder_states[-1].reshape(1, 1, -1)
         curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
 
-        curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states, alignment_model=self.alignment_model)
-        curr_attn = self.sm_dim0(curr_attn)
-        curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
+        flat_src_tokens = [i for j in src_tokens for i in j]
+        # flat_tgt_tokens = [i for j in tgt_tokens for i in j]
 
+        assert len(flat_src_tokens) == encoder_states.shape[0]
+
+        new_words = sorted(list(set([w for w in flat_src_tokens if w not in self.vocab])))
+
+        extended_vocab = self.vocab + new_words
+        _extend_2_ix = {w: ix for w, ix in zip(new_words, range(len(self.vocab), len(extended_vocab)))}
+        extended_vocab_2_ix = {**self.vocab_2_ix, **_extend_2_ix}
+        extended_ix_2_vocab = {v: k for k, v in extended_vocab_2_ix.items()}
+
+        assert len(extended_vocab) == len(extended_vocab_2_ix) == len(extended_ix_2_vocab)
+
+        # for curr_elmo in tgt_elmo:
         collected_summary_tokens = [['<START>']]
 
         curr_elmo = self._embed_doc(doc_tokens=collected_summary_tokens)
 
         for token_ix in range(len_of_summary):
-            curr_i = torch.cat((curr_ctxt, curr_elmo), dim=0).reshape(1, 1, -1)
+            p_vocab = torch.zeros(size=(1, len(extended_vocab)))
+            p_attn = torch.zeros(size=(1, len(extended_vocab)))
 
+            curr_i = curr_elmo.reshape(1, 1, -1)
             curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
 
-            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_hidden_states,
+            # Calculate Context Vector
+            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_states,
                                     alignment_model=self.alignment_model)
             curr_attn = self.sm_dim0(curr_attn)
-            curr_ctxt = torch.matmul(curr_attn, encoder_hidden_states)
+            curr_ctxt = torch.matmul(curr_attn, encoder_states)
 
-            # Output
+            # Concatenate Context & Decoder Hidden State
             state_ctxt_concat = torch.cat((curr_h.squeeze(), curr_ctxt))
 
-            vocab_projection = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
+            # Project to Vocabulary
+            vocab_prjtn = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
+            p_vocab[:, :self.VOCAB_SIZE] = vocab_prjtn
+            for src_word, src_attn in zip(flat_src_tokens, curr_attn):
+                p_attn[:, extended_vocab_2_ix[src_word]] += src_attn
 
-            curr_pred_token = self.ix_2_vocab[vocab_projection.argmax().item()]
+            p_gen = self.sigmoid(
+                self.Wh_pgen(curr_ctxt) + self.Ws_pgen(curr_h.squeeze()) + self.Wx_pgen(curr_i.squeeze()))
 
-            collected_summary_tokens[-1][-1].append(curr_pred_token)
+            p_W = p_gen * p_vocab + (1 - p_gen) * p_attn
+
+            curr_pred_token = extended_ix_2_vocab[p_W.argmax(dim=1).item()]
+
+            collected_summary_tokens[-1].append(curr_pred_token)
 
             # Just get the Elmo Embedding of the Current Sentence
-            curr_elmo = self._embed_doc([collected_summary_tokens[-1]])
+            curr_elmo = self._embed_doc([collected_summary_tokens[-1]])[-1]
 
             if curr_pred_token == '.':
                 # Start a New Line
                 collected_summary_tokens.append([])
 
-        return collected_summary_tokens
+        flat_collected_summary_tokens = [i for j in collected_summary_tokens for i in j]
+
+        return flat_collected_summary_tokens
 
     def forward(self, orig_text_tokens: List[List[str]], **kwargs) -> torch.Tensor:
         # Embed the Orig with Elmo
@@ -287,14 +276,27 @@ class PointerGenerator(nn.Module):
         if summ_text_tokens:
             # -> Training Loop
             print("Training")
-            loss = self._decoder_train(encoder_states, orig_text_tokens, summ_text_tokens)
+             = self._decoder_train(encoder_states=encoder_states,
+                                                           src_tokens=orig_text_tokens,
+                                                           tgt_tokens=summ_text_tokens)
+
+            loss = loss_fn(input=pred_ixs_probs, target=gold_ixs)
+            print("LOSS -> {0}".format(loss.item()))
+
+            return gold_ixs, pred_ixs_probs
         else:
             # -> Inference Loop
             print("Testing")
-            pred_summ_text_tokens = self._decoder_test(encoder_states, len_of_summary=30)
-            pass
+            pred_summ_text_tokens = self._decoder_test(encoder_states=encoder_states,
+                                                       src_tokens=orig_text_tokens,
+                                                       len_of_summary=50)
+            print("Original :")
+            flat_orig_text_tokens = [i for j in orig_text_tokens for i in j]
+            print(' '.join(flat_orig_text_tokens))
+            print("\n\nSummary :")
+            print()
 
-        return None
+            return ' '.join(pred_summ_text_tokens)
 
 
 init_vocab = []
@@ -302,17 +304,22 @@ with open('init_vocab_str.txt') as f:
     for line in f.readlines():
         init_vocab.append(line.strip())
 
+assert init_vocab[constant.UNK_TOK_IX] == "<UNK>", "<UNK> Token not found at 0 position "
+
 model = PointerGenerator(vocab=init_vocab,
                          alignment_model="additive",
                          elmo_embed_dim=constant.ELMO_EMBED_DIM,
                          elmo_weights_file=constant.ELMO_WEIGHTS_FILE,
                          elmo_options_file=constant.ELMO_OPTIONS_FILE)
 
-input_texts = ["Hello World. This is a great world. I love NLP!"]
-output_texts = ["Hello World! I love NLP"]
+input_texts = [
+    "Alexander Haig, who managed the Nixon administration during the Watergate crisis and served a controversial stint as secretary of state under President Reagan, died on Saturday. He was 85. Haig died at Johns Hopkins Hospital in Baltimore, Maryland, after he was admitted there on January 28, spokesman Gary Stephenson said. He served his country well. For that he should be remembered, said William Bennett, who was secretary of education during the Reagan administration. He carried himself well. He carried himself with dignity and honor. The White House issued a statement mourning Haig, saying he exemplified our finest warrior-diplomat tradition of those who dedicate their lives to public service. A top official in the administrations of three presidents Richard Nixon, Gerald Ford and Ronald Reagan Haig served as Nixon s chief of staff during the Watergate political crisis, a scandal that dogged the administration in the 1970s. There was a time during the Watergate crisis when President Nixon was nearly incapacitated, said political analyst and CNN contributor David Gergen, who worked with Haig during the Nixon and Reagan administrations. He had a hard time focusing, so obviously obsessed with the scandal and the gathering storms around him. I watched Al Haig keep the government moving. I thought it was a great act of statesmanship and service to the country. Haig became secretary of state during the Reagan administration and drew controversy for his much-criticized remark on television after the president was shot and wounded by John Hinckley in March 1981. As of now, I am in control here in the White House, Haig said as Vice President George H.W. Bush was headed to Washington from Texas. Haig said he was nt bypassing the rules ; he was just trying to manage the crisis until the vice president arrived. However, he was highly criticized for his behavior, and many observers believe it doomed his political ambitions. Born December 2, 1924, in Bala Cynwyd, Pennsylvania, a suburb of Philadelphia, Alexander Meigs Haig Jr. was raised by his mother after he lost his father at age 10. He attended the University of Notre Dame for two years before transferring to the U.S. Military Academy in 1944. After his graduation in 1947, he served in Japan and later served on Gen. Douglas MacArthur s staff in Japan during the Korean War. He also served in Vietnam, where he earned the distinguished service cross for heroism in combat. He also won the Purple Heart and Silver Star twice. Haig served as supreme allied commander of NATO forces in Europe for five years. There was an assassination attempt on him in Brussels in 1979 as he was being driven to NATO headquarters. A public official known for his loyalty, Haig had hawkish foreign policy views, and Gergen said he could be tough and combustible. He was first and foremost a soldier, Gergen said. Haig was assistant to National Security Adviser Henry Kissinger in the Nixon White House and was involved in the Paris peace agreements that brought an end to the U.S. involvement in the Vietnam War. He was long rumored to be Deep Throat, the Washington Post s inside source on the Watergate break-in and cover-up that eventually destroyed Nixon s presidency. W. Mark Felt, then a high-ranking FBI official, declared in 2005 that he was the source. Great tensions in the Reagan administration simmered over his stances, and Gergen said, There was a sense in the White House that he was grabbing too much power. He wanted to be the, quote, vicar of foreign policy, and there was a lot of pushback from the White House on that. He felt that he had been guaranteed by Ronald Reagan a role as a strong secretary of state and the reins of power would be in his hands. He resented the White House staff trying to manage him, Gergen said. My own sense is that he has been underappreciated, he said. TIME : Read why Haig left the Reagan White House As secretary of state, Haig tried shuttle diplomacy to head off war between Britain and Argentina over the Falkland Islands in 1982, but he failed. He opposed Reagan s handling of Iran and disagreed with the president s plan on aid to the contra rebels in Nicaragua. He eventually left the Reagan administration after 18 months and made a run for president in 1988, pulling out before the New Hampshire primary. He backed Bob Dole instead of George H.W. Bush when he dropped out. Former U.S. Ambassador to the U.N. John Bolton announced Haig s death to the Conservative Political Action Conference in Washington on Saturday and called him a patriot ."]
+output_texts = [
+    "Haig worked under Presidents Nixon, Ford, Reagan. He was highly decorated soldier who served during Korean and Vietnam wars. As secretary of state, Haig wrongly declared I am in control here after Reagan was shot. He unsuccessfully sought the 1988 Republican presidential nomination"]
 
 input_text_tokens = [helper.tokenize_en(input_text, lowercase=True) for input_text in input_texts]
 output_text_tokens = [helper.tokenize_en(output_text, lowercase=True) for output_text in output_texts]
 
-tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
-# print("Output Tensor Shape is :{0}".format(tensor.shape))
+# tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
+
+tensor = model(orig_text_tokens=input_text_tokens[0])
