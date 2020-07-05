@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Union
 import torch
 import torch.nn as nn
 from allennlp.modules.elmo import Elmo, batch_to_ids
@@ -148,7 +148,6 @@ class PointerGenerator(nn.Module):
         tgt_elmo = self._embed_doc(tgt_tokens, prepend_START=True)
 
         flat_src_tokens = [i for j in src_tokens for i in j]
-        flat_tgt_tokens = [i for j in tgt_tokens for i in j]
 
         assert len(flat_src_tokens) == encoder_states.shape[0]
 
@@ -160,8 +159,6 @@ class PointerGenerator(nn.Module):
         extended_ix_2_vocab = {v: k for k, v in extended_vocab_2_ix.items()}
 
         assert len(extended_vocab) == len(extended_vocab_2_ix) == len(extended_ix_2_vocab)
-
-        gold_vocab_ixs = torch.LongTensor([extended_vocab_2_ix.get(w, constant.UNK_TOK_IX) for w in flat_tgt_tokens])
 
         # To calculate loss
         collect_xtnd_vocab_prjtns = []
@@ -195,14 +192,14 @@ class PointerGenerator(nn.Module):
             collect_xtnd_vocab_prjtns.append(p_W)
 
         collect_xtnd_vocab_prjtns = torch.cat(collect_xtnd_vocab_prjtns, dim=0)
-        return gold_vocab_ixs, collect_xtnd_vocab_prjtns
 
-    def _decoder_test(self, encoder_states, src_tokens, len_of_summary: int = 20):
+        return (collect_xtnd_vocab_prjtns, extended_vocab_2_ix, extended_ix_2_vocab)
+
+    def _decoder_test(self, encoder_states, src_tokens, len_of_summary: int):
         _init_probe = encoder_states[-1].reshape(1, 1, -1)
         curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
 
         flat_src_tokens = [i for j in src_tokens for i in j]
-        # flat_tgt_tokens = [i for j in tgt_tokens for i in j]
 
         assert len(flat_src_tokens) == encoder_states.shape[0]
 
@@ -219,6 +216,8 @@ class PointerGenerator(nn.Module):
         collected_summary_tokens = [['<START>']]
 
         curr_elmo = self._embed_doc(doc_tokens=collected_summary_tokens)
+
+        collect_xtnd_vocab_prjtns = []
 
         for token_ix in range(len_of_summary):
             p_vocab = torch.zeros(size=(1, len(extended_vocab)))
@@ -246,23 +245,23 @@ class PointerGenerator(nn.Module):
                 self.Wh_pgen(curr_ctxt) + self.Ws_pgen(curr_h.squeeze()) + self.Wx_pgen(curr_i.squeeze()))
 
             p_W = p_gen * p_vocab + (1 - p_gen) * p_attn
+            collect_xtnd_vocab_prjtns.append(p_W)
 
             curr_pred_token = extended_ix_2_vocab[p_W.argmax(dim=1).item()]
-
             collected_summary_tokens[-1].append(curr_pred_token)
 
-            # Just get the Elmo Embedding of the Current Sentence
+            # Just get the Elmo Embedding of the Latest Word of the Latest Sentence
             curr_elmo = self._embed_doc([collected_summary_tokens[-1]])[-1]
 
             if curr_pred_token == '.':
                 # Start a New Line
                 collected_summary_tokens.append([])
 
-        flat_collected_summary_tokens = [i for j in collected_summary_tokens for i in j]
+        collect_xtnd_vocab_prjtns = torch.cat(collect_xtnd_vocab_prjtns, dim=0)
 
-        return flat_collected_summary_tokens
+        return (collect_xtnd_vocab_prjtns, extended_vocab_2_ix, extended_ix_2_vocab)
 
-    def forward(self, orig_text_tokens: List[List[str]], **kwargs) -> torch.Tensor:
+    def forward(self, orig_text_tokens: List[List[str]], **kwargs) -> Union:
         # Embed the Orig with Elmo
         orig_embedded_elmo = self._embed_doc(orig_text_tokens)
 
@@ -272,31 +271,24 @@ class PointerGenerator(nn.Module):
 
         # summ_text implies training
         summ_text_tokens = kwargs.get('summ_text_tokens', None)
+        summary_length = kwargs.get('summ_text_length', None)
 
         if summ_text_tokens:
             # -> Training Loop
             print("Training")
-             = self._decoder_train(encoder_states=encoder_states,
-                                                           src_tokens=orig_text_tokens,
-                                                           tgt_tokens=summ_text_tokens)
-
-            loss = loss_fn(input=pred_ixs_probs, target=gold_ixs)
-            print("LOSS -> {0}".format(loss.item()))
-
-            return gold_ixs, pred_ixs_probs
+            prjtns, v2i, i2v = self._decoder_train(encoder_states=encoder_states,
+                                                   src_tokens=orig_text_tokens,
+                                                   tgt_tokens=summ_text_tokens)
         else:
             # -> Inference Loop
             print("Testing")
-            pred_summ_text_tokens = self._decoder_test(encoder_states=encoder_states,
-                                                       src_tokens=orig_text_tokens,
-                                                       len_of_summary=50)
-            print("Original :")
-            flat_orig_text_tokens = [i for j in orig_text_tokens for i in j]
-            print(' '.join(flat_orig_text_tokens))
-            print("\n\nSummary :")
-            print()
-
-            return ' '.join(pred_summ_text_tokens)
+            target_length = 30
+            if summary_length:
+                target_length = summary_length
+            prjtns, v2i, i2v = self._decoder_test(encoder_states=encoder_states,
+                                                  src_tokens=orig_text_tokens,
+                                                  len_of_summary=target_length)
+        return (prjtns, v2i, i2v)
 
 
 init_vocab = []
@@ -317,9 +309,28 @@ input_texts = [
 output_texts = [
     "Haig worked under Presidents Nixon, Ford, Reagan. He was highly decorated soldier who served during Korean and Vietnam wars. As secretary of state, Haig wrongly declared I am in control here after Reagan was shot. He unsuccessfully sought the 1988 Republican presidential nomination"]
 
-input_text_tokens = [helper.tokenize_en(input_text, lowercase=True) for input_text in input_texts]
-output_text_tokens = [helper.tokenize_en(output_text, lowercase=True) for output_text in output_texts]
+def train(orig_text, summ_text, curr_model: PointerGenerator):
+    orig_tokens = helper.tokenize_en(orig_text, lowercase=True)
+    summ_tokens = helper.tokenize_en(summ_text, lowercase=True)
+    prjtns, v2i, i2v = curr_model(orig_text_tokens=orig_tokens,
+                                  summ_text_tokens=summ_tokens)
+    flat_summ_tokens = [i for j in summ_tokens for i in j]
+    gold_ixs = torch.LongTensor([v2i.get(w, constant.UNK_TOK_IX) for w in flat_summ_tokens])
+    loss = loss_fn(input=prjtns, target=gold_ixs)
+    print("LOSS -> {0}".format(loss.item()))
+    return loss
 
-# tensor = model(orig_text_tokens=input_text_tokens[0], summ_text_tokens=output_text_tokens[0])
 
-tensor = model(orig_text_tokens=input_text_tokens[0])
+def test(orig_text, summ_text_length, curr_model: PointerGenerator):
+    # Tokenize by Sents
+    orig_tokens = helper.tokenize_en(orig_text, lowercase=True)
+    prjtns, v2i, i2v = curr_model(orig_text_tokens=orig_tokens, summ_text_length=summ_text_length)
+    prjtns_argmax = prjtns.argmax(dim=1)
+    pred_summary = ' '.join([i2v[i.item()] for i in prjtns_argmax])
+    print("Predicted Summary : \n{0}".format(pred_summary))
+    return pred_summary
+
+
+# x = train(orig_text=input_texts[0], summ_text=output_texts[0], curr_model=model)
+
+x = test(orig_text=input_texts[0], summ_text_length=9, curr_model=model)
