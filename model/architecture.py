@@ -333,6 +333,6 @@ input_texts = [
 output_texts = [
     "Haig worked under Presidents Nixon, Ford, Reagan. He was highly decorated soldier who served during Korean and Vietnam wars. As secretary of state, Haig wrongly declared I am in control here after Reagan was shot. He unsuccessfully sought the 1988 Republican presidential nomination"]
 
-# x = train(orig_text=input_texts[0], summ_text=output_texts[0], curr_model=model)
+x = train(orig_text=input_texts[0], summ_text=output_texts[0], curr_model=model)
 
-x = test(orig_text=input_texts[0], summ_text_length=9, curr_model=model)
+# x = test(orig_text=input_texts[0], summ_text_length=9, curr_model=model)
