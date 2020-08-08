@@ -263,53 +263,104 @@ class PointerGenerator(LightningModule):
 
         return (collect_xtnd_vocab_prjtns, extended_vocab_2_ix, extended_ix_2_vocab)
 
-    def forward(self,
-                curr_embed_input: torch.Tensor,
-                curr_deco_state: Tuple[torch.Tensor],
-                curr_enco_tokens: List,
-                curr_enco_states: torch.Tensor,
-                curr_vocab_2_ix: Dict):
+    def _extend_vocab(self, possible_new_tokens):
+        new_words = sorted(list(set([w for w in possible_new_tokens if w not in self.vocab])))
+        extended_vocab = self.vocab + new_words
+        extended_vocab_2_ix = {**self.vocab_2_ix, **{w: ix for w, ix in zip(new_words, range(
+            len(self.vocab), len(extended_vocab)))}}
+        extended_ix_2_vocab = {v: k for k, v in extended_vocab_2_ix.items()}
 
-        p_vocab = torch.zeros(size=(1, len(curr_vocab_2_ix)))
-        p_attn = torch.zeros(size=(1, len(curr_vocab_2_ix)))
+        assert len(extended_vocab) == len(extended_vocab_2_ix) == len(extended_ix_2_vocab), "Vocab Length Mismatch"
 
-        curr_embed_input = curr_embed_input.reshape(1, 1, -1)
-        curr_embed_output, curr_deco_state = self.decoder(curr_embed_input, curr_deco_state)
+        return extended_vocab, extended_vocab_2_ix, extended_ix_2_vocab
 
-        # Extract the hidden state vector
-        curr_deco_hidd, _ = curr_deco_state
+    def training_step(self, batch):
+        batch_loss = None
+        for orig_text, summ_text in batch:
 
-        # Calculate Context Vector
-        curr_enco_attn = self._align(s=curr_deco_hidd.squeeze(dim=1),
-                                     h=curr_enco_states,
-                                     alignment_model=self.alignment_model)
-        curr_enco_attn = self.sm_dim0(curr_enco_attn)
-        curr_enco_ctxt = torch.matmul(curr_enco_attn, curr_enco_states)
+    def forward(self, orig_text: str, **kwargs) -> Union:
+        orig_tokens = helper.tokenize_en(orig_text, lowercase=True)
 
-        # Concatenate Context & Decoder Hidden State
-        state_ctxt_concat = torch.cat((curr_deco_hidd.squeeze(), curr_enco_ctxt))
+        # Extend the vocabulary to include new words
+        orig_tokens_flat = [i for j in orig_tokens for i in j]
+        ex_vocab, ex_vocab_2_ix, ex_ix_2_vocab = self._extend_vocab(possible_new_tokens=orig_tokens_flat)
 
-        # Project to Vocabulary
-        vocab_prjtn = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
-        p_vocab[:, :self.VOCAB_SIZE] = vocab_prjtn
-        for src_word, src_attn in zip(curr_enco_tokens, curr_enco_attn):
-            p_attn[:, curr_vocab_2_ix[src_word]] += src_attn
+        # Embed the Orig with Elmo
+        orig_elmo = self._embed_doc(orig_tokens)
+        # Encode with BiLSTM
+        orig_elmo.unsqueeze_(dim=1)
+        encoder_states = self._run_through_bilstm(orig_elmo, self.encoder)
+        assert len(orig_tokens_flat) == encoder_states.shape[0]
 
-        p_gen = self.sigmoid(
-            self.Wh_pgen(curr_enco_ctxt) + self.Ws_pgen(curr_deco_hidd.squeeze()) + self.Wx_pgen(
-                curr_embed_input.squeeze()))
+        # summ_text implies training
+        summ_text = kwargs.get('summ_text', None)
 
-        p_W = p_gen * p_vocab + (1 - p_gen) * p_attn
-        return p_W
+        if summ_text:
+            summ_tokens = helper.tokenize_en(summ_text, lowercase=True)
+            summ_elmo = self._embed_doc(summ_tokens, prepend_START=True)
+            summ_len = len(summ_elmo)
+        else:
+            summ_len = kwargs.get('summ_len', None)
+            generated_summ_tokens = [['<START>']]
 
+        # To calculate loss
+        vocab_prjtns = []
+        _init_probe = encoder_states[-1].reshape(1, 1, -1)
+        curr_deco_state = (_init_probe, torch.randn_like(_init_probe))
+        curr_pred_token = None
+        for token_ix in range(summ_len):
+            if summ_text:
+                curr_i = summ_elmo[token_ix].reshape(1, 1, -1)
+            elif curr_pred_token:
+                # Append currently predicted token
+                generated_summ_tokens[-1].append(curr_pred_token)
+                # Just get the Elmo Embedding of the Last Word of the Last Sentence
+                curr_i = self._embed_doc([generated_summ_tokens[-1]])[-1].reshape(1, 1, -1)
 
-    def training_step(self, *args, **kwargs):
-        pass
+                # Start a New Line
+                if curr_pred_token == '.':
+                    generated_summ_tokens.append([])
+            else:
+                # Init input for prediction
+                curr_i = self._embed_doc([generated_summ_tokens[-1]])[-1].reshape(1, 1, -1)
 
+            p_vocab = torch.zeros(size=(1, len(ex_vocab)))
+            p_attn = torch.zeros(size=(1, len(ex_vocab)))
 
+            curr_embed_output, curr_deco_state = self.decoder(curr_i, curr_deco_state)
 
+            # Extract the hidden state vector
+            curr_deco_hidd, _ = curr_deco_state
 
-    def forward(self, orig_text_tokens: List[List[str]], **kwargs) -> Union:
+            # Calculate Context Vector
+            curr_enco_attn = self._align(s=curr_deco_hidd.squeeze(dim=1),
+                                         h=encoder_states,
+                                         alignment_model=self.alignment_model)
+            curr_enco_attn = self.sm_dim0(curr_enco_attn)
+            curr_enco_ctxt = torch.matmul(curr_enco_attn, encoder_states)
+
+            # Concatenate Context & Decoder Hidden State
+            state_ctxt_concat = torch.cat((curr_deco_hidd.squeeze(), curr_enco_ctxt))
+
+            # Project to Vocabulary
+            vocab_prjtn = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
+            p_vocab[:, :self.VOCAB_SIZE] = vocab_prjtn
+            for src_word, src_attn in zip(orig_tokens_flat, curr_enco_attn):
+                p_attn[:, ex_vocab_2_ix[src_word]] += src_attn
+
+            p_gen = self.sigmoid(
+                self.Wh_pgen(curr_enco_ctxt) + self.Ws_pgen(curr_deco_hidd.squeeze()) + self.Wx_pgen(
+                    curr_i.squeeze()))
+
+            p_W = p_gen * p_vocab + (1 - p_gen) * p_attn
+            curr_pred_token = ex_ix_2_vocab[p_W.argmax(dim=1).item()]
+
+            vocab_prjtns.append(p_W)
+
+        vocab_prjtns = torch.cat(vocab_prjtns, dim=0)
+        return (vocab_prjtns, ex_vocab_2_ix, ex_ix_2_vocab)
+
+    def forwardx(self, orig_text_tokens: List[List[str]], **kwargs) -> Union:
         # Embed the Orig with Elmo
         orig_embedded_elmo = self._embed_doc(orig_text_tokens)
 

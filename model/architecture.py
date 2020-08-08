@@ -216,7 +216,6 @@ class PointerGenerator(nn.Module):
 
         # for curr_elmo in tgt_elmo:
         collected_summary_tokens = [['<START>']]
-
         curr_elmo = self._embed_doc(doc_tokens=collected_summary_tokens)
 
         collect_xtnd_vocab_prjtns = []
