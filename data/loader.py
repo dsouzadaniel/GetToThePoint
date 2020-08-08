@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 class CNNLoader(Dataset):
 
     def __init__(self, path_to_csv):
-        df = pd.read_csv(path_to_csv, nrows=5)
+        df = pd.read_csv(path_to_csv, nrows=10)
         self.data_tuples = [(r['Original'], r['Summary']) for _, r in df.iterrows()]
 
     def __getitem__(self, item):

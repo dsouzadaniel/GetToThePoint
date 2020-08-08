@@ -1,6 +1,8 @@
 from typing import List, Union, Tuple, Dict
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
+from torch.optim import Adam
 from allennlp.modules.elmo import Elmo, batch_to_ids
 
 import os
@@ -145,124 +147,6 @@ class PointerGenerator(LightningModule):
             e = torch.matmul(h, s.squeeze(dim=0))
         return e
 
-    def _decoder_train(self, encoder_states, src_tokens, tgt_tokens):
-        _init_probe = encoder_states[-1].reshape(1, 1, -1)
-        curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
-
-        flat_src_tokens = [i for j in src_tokens for i in j]
-
-        assert len(flat_src_tokens) == encoder_states.shape[0]
-
-        new_words = sorted(list(set([w for w in flat_src_tokens if w not in self.vocab])))
-
-        extended_vocab = self.vocab + new_words
-        _extend_2_ix = {w: ix for w, ix in zip(new_words, range(len(self.vocab), len(extended_vocab)))}
-        extended_vocab_2_ix = {**self.vocab_2_ix, **_extend_2_ix}
-        extended_ix_2_vocab = {v: k for k, v in extended_vocab_2_ix.items()}
-
-        assert len(extended_vocab) == len(extended_vocab_2_ix) == len(extended_ix_2_vocab)
-
-        # To calculate loss
-        collect_xtnd_vocab_prjtns = []
-
-        tgt_elmo = self._embed_doc(tgt_tokens, prepend_START=True)
-        for curr_elmo in tgt_elmo:
-            p_vocab = torch.zeros(size=(1, len(extended_vocab)))
-            p_attn = torch.zeros(size=(1, len(extended_vocab)))
-
-            curr_i = curr_elmo.reshape(1, 1, -1)
-            curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
-
-            # Calculate Context Vector
-            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_states,
-                                    alignment_model=self.alignment_model)
-            curr_attn = self.sm_dim0(curr_attn)
-            curr_ctxt = torch.matmul(curr_attn, encoder_states)
-
-            # Concatenate Context & Decoder Hidden State
-            state_ctxt_concat = torch.cat((curr_h.squeeze(), curr_ctxt))
-
-            # Project to Vocabulary
-            vocab_prjtn = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
-            p_vocab[:, :self.VOCAB_SIZE] = vocab_prjtn
-            for src_word, src_attn in zip(flat_src_tokens, curr_attn):
-                p_attn[:, extended_vocab_2_ix[src_word]] += src_attn
-
-            p_gen = self.sigmoid(
-                self.Wh_pgen(curr_ctxt) + self.Ws_pgen(curr_h.squeeze()) + self.Wx_pgen(curr_i.squeeze()))
-
-            p_W = p_gen * p_vocab + (1 - p_gen) * p_attn
-            collect_xtnd_vocab_prjtns.append(p_W)
-
-        collect_xtnd_vocab_prjtns = torch.cat(collect_xtnd_vocab_prjtns, dim=0)
-
-        return (collect_xtnd_vocab_prjtns, extended_vocab_2_ix, extended_ix_2_vocab)
-
-    def _decoder_test(self, encoder_states, src_tokens, len_of_summary: int):
-        _init_probe = encoder_states[-1].reshape(1, 1, -1)
-        curr_h, curr_c = (_init_probe, torch.randn_like(_init_probe))
-
-        flat_src_tokens = [i for j in src_tokens for i in j]
-
-        assert len(flat_src_tokens) == encoder_states.shape[0]
-
-        new_words = sorted(list(set([w for w in flat_src_tokens if w not in self.vocab])))
-
-        extended_vocab = self.vocab + new_words
-        _extend_2_ix = {w: ix for w, ix in zip(new_words, range(len(self.vocab), len(extended_vocab)))}
-        extended_vocab_2_ix = {**self.vocab_2_ix, **_extend_2_ix}
-        extended_ix_2_vocab = {v: k for k, v in extended_vocab_2_ix.items()}
-
-        assert len(extended_vocab) == len(extended_vocab_2_ix) == len(extended_ix_2_vocab)
-
-        collect_xtnd_vocab_prjtns = []
-
-        # for curr_elmo in tgt_elmo:
-        collected_summary_tokens = [['<START>']]
-        curr_elmo = self._embed_doc(doc_tokens=collected_summary_tokens)
-
-        for token_ix in range(len_of_summary):
-            p_vocab = torch.zeros(size=(1, len(extended_vocab)))
-            p_attn = torch.zeros(size=(1, len(extended_vocab)))
-
-            curr_i = curr_elmo.reshape(1, 1, -1)
-            curr_o, (curr_h, curr_c) = self.decoder(curr_i, (curr_h, curr_c))
-
-            # Calculate Context Vector
-            curr_attn = self._align(s=curr_h.squeeze(dim=1), h=encoder_states,
-                                    alignment_model=self.alignment_model)
-            curr_attn = self.sm_dim0(curr_attn)
-            curr_ctxt = torch.matmul(curr_attn, encoder_states)
-
-            # Concatenate Context & Decoder Hidden State
-            state_ctxt_concat = torch.cat((curr_h.squeeze(), curr_ctxt))
-
-            # Project to Vocabulary
-            vocab_prjtn = self.Vocab_Project_2(self.Vocab_Project_1(state_ctxt_concat))
-            p_vocab[:, :self.VOCAB_SIZE] = vocab_prjtn
-            for src_word, src_attn in zip(flat_src_tokens, curr_attn):
-                p_attn[:, extended_vocab_2_ix[src_word]] += src_attn
-
-            p_gen = self.sigmoid(
-                self.Wh_pgen(curr_ctxt) + self.Ws_pgen(curr_h.squeeze()) + self.Wx_pgen(curr_i.squeeze()))
-
-            p_W = p_gen * p_vocab + (1 - p_gen) * p_attn
-            collect_xtnd_vocab_prjtns.append(p_W)
-
-            curr_pred_token = extended_ix_2_vocab[p_W.argmax(dim=1).item()]
-            collected_summary_tokens[-1].append(curr_pred_token)
-
-            # Just get the Elmo Embedding of the Latest Word of the Latest Sentence
-            curr_elmo = self._embed_doc([collected_summary_tokens[-1]])[-1]
-
-            if curr_pred_token == '.':
-                # Start a New Line
-                collected_summary_tokens.append([])
-
-        collect_xtnd_vocab_prjtns = torch.cat(collect_xtnd_vocab_prjtns, dim=0)
-
-        return (collect_xtnd_vocab_prjtns, extended_vocab_2_ix, extended_ix_2_vocab)
-
     def _extend_vocab(self, possible_new_tokens):
         new_words = sorted(list(set([w for w in possible_new_tokens if w not in self.vocab])))
         extended_vocab = self.vocab + new_words
@@ -274,9 +158,56 @@ class PointerGenerator(LightningModule):
 
         return extended_vocab, extended_vocab_2_ix, extended_ix_2_vocab
 
-    def training_step(self, batch):
-        batch_loss = None
-        for orig_text, summ_text in batch:
+    # Lightning Methods
+    def configure_optimizers(self):
+        return Adam(self.parameters(), lr=1e-3)
+
+    def train_dataloader(self) -> DataLoader:
+        train_dataset = loader.CNNLoader(path_to_csv='dataset/gttp_train.csv')
+        train_loader = DataLoader(dataset=train_dataset,
+                                  shuffle=True,
+                                  batch_size=constant.BATCH_SIZE,
+                                  num_workers=4)
+        return train_loader
+
+    def training_step(self, batch, batch_nb):
+        batch_loss = 0
+        batch_orig, batch_summ = batch
+        for orig_text, summ_text in zip(batch_orig, batch_summ):
+            summ_tokens = helper.tokenize_en(summ_text, lowercase=True)
+            summ_tokens_flat = [i for j in summ_tokens for i in j]
+
+            prjtns, v2i, _ = self(orig_text=orig_text, summ_text=summ_text)
+            gold_ixs = torch.LongTensor([v2i.get(w, constant.UNK_TOK_IX) for w in summ_tokens_flat])
+
+            batch_loss += loss_fn(input=prjtns, target=gold_ixs)
+
+        logs = {'train_loss': batch_loss.detach().item(), 'step':batch_nb}
+        return {'loss': batch_loss, 'log': logs}
+
+    def val_dataloader(self) -> DataLoader:
+        validation_dataset = loader.CNNLoader(path_to_csv='dataset/gttp_valid.csv')
+        validation_loader = DataLoader(dataset=validation_dataset,
+                                       shuffle=False,
+                                       batch_size=constant.BATCH_SIZE,
+                                       num_workers=4)
+        return validation_loader
+
+    def validation_step(self, batch, batch_nb):
+        batch_loss = 0
+        batch_orig, batch_summ = batch
+        for orig_text, summ_text in zip(batch_orig, batch_summ):
+            summ_tokens = helper.tokenize_en(summ_text, lowercase=True)
+            summ_tokens_flat = [i for j in summ_tokens for i in j]
+
+            prjtns, v2i, _ = self(orig_text=orig_text, summ_text=summ_text)
+            gold_ixs = torch.LongTensor([v2i.get(w, constant.UNK_TOK_IX) for w in summ_tokens_flat])
+            batch_loss += loss_fn(input=prjtns, target=gold_ixs)
+
+        batch_loss /= len(batch_orig)
+
+        logs = {'val_loss': batch_loss.detach().item()}
+        return {'val_loss': batch_loss, 'log': logs}
 
     def forward(self, orig_text: str, **kwargs) -> Union:
         orig_tokens = helper.tokenize_en(orig_text, lowercase=True)
@@ -292,14 +223,16 @@ class PointerGenerator(LightningModule):
         encoder_states = self._run_through_bilstm(orig_elmo, self.encoder)
         assert len(orig_tokens_flat) == encoder_states.shape[0]
 
-        # summ_text implies training
+        # summ_text implies Training
         summ_text = kwargs.get('summ_text', None)
 
         if summ_text:
+            # -> Training Loop
             summ_tokens = helper.tokenize_en(summ_text, lowercase=True)
             summ_elmo = self._embed_doc(summ_tokens, prepend_START=True)
             summ_len = len(summ_elmo)
         else:
+            # -> Inference Loop
             summ_len = kwargs.get('summ_len', None)
             generated_summ_tokens = [['<START>']]
 
@@ -309,15 +242,14 @@ class PointerGenerator(LightningModule):
         curr_deco_state = (_init_probe, torch.randn_like(_init_probe))
         curr_pred_token = None
         for token_ix in range(summ_len):
-            if summ_text:
+            if summ_text is not None:
                 curr_i = summ_elmo[token_ix].reshape(1, 1, -1)
-            elif curr_pred_token:
+            elif curr_pred_token is not None:
                 # Append currently predicted token
                 generated_summ_tokens[-1].append(curr_pred_token)
                 # Just get the Elmo Embedding of the Last Word of the Last Sentence
                 curr_i = self._embed_doc([generated_summ_tokens[-1]])[-1].reshape(1, 1, -1)
-
-                # Start a New Line
+                # Start a New Line if necessary
                 if curr_pred_token == '.':
                     generated_summ_tokens.append([])
             else:
@@ -327,6 +259,7 @@ class PointerGenerator(LightningModule):
             p_vocab = torch.zeros(size=(1, len(ex_vocab)))
             p_attn = torch.zeros(size=(1, len(ex_vocab)))
 
+            # Run through the decoder
             curr_embed_output, curr_deco_state = self.decoder(curr_i, curr_deco_state)
 
             # Extract the hidden state vector
@@ -358,33 +291,5 @@ class PointerGenerator(LightningModule):
             vocab_prjtns.append(p_W)
 
         vocab_prjtns = torch.cat(vocab_prjtns, dim=0)
+
         return (vocab_prjtns, ex_vocab_2_ix, ex_ix_2_vocab)
-
-    def forwardx(self, orig_text_tokens: List[List[str]], **kwargs) -> Union:
-        # Embed the Orig with Elmo
-        orig_embedded_elmo = self._embed_doc(orig_text_tokens)
-
-        # Encode with BiLSTM
-        orig_embedded_elmo.unsqueeze_(dim=1)
-        encoder_states = self._run_through_bilstm(orig_embedded_elmo, self.encoder)
-
-        # summ_text implies training
-        summ_text_tokens = kwargs.get('summ_text_tokens', None)
-        summary_length = kwargs.get('summ_text_length', None)
-
-        if summ_text_tokens:
-            # -> Training Loop
-            print("Training")
-            prjtns, v2i, i2v = self._decoder_train(encoder_states=encoder_states,
-                                                   src_tokens=orig_text_tokens,
-                                                   tgt_tokens=summ_text_tokens)
-        else:
-            # -> Inference Loop
-            print("Testing")
-            target_length = 30
-            if summary_length:
-                target_length = summary_length
-            prjtns, v2i, i2v = self._decoder_test(encoder_states=encoder_states,
-                                                  src_tokens=orig_text_tokens,
-                                                  len_of_summary=target_length)
-        return (prjtns, v2i, i2v)
