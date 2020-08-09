@@ -30,6 +30,7 @@ class PointerGenerator(LightningModule):
                  elmo_sent: bool = False,
                  alignment_model: str = "additive"):
         super().__init__()
+        self.save_hyperparameters()
 
         # Model Properties
         self.elmo_sent = elmo_sent
@@ -182,8 +183,14 @@ class PointerGenerator(LightningModule):
 
             batch_loss += loss_fn(input=prjtns, target=gold_ixs)
 
-        logs = {'train_loss': batch_loss.detach().item(), 'step':batch_nb}
-        return {'loss': batch_loss, 'log': logs}
+        return {'loss': batch_loss}
+
+    def training_epoch_end(self, training_step_outputs):
+        mean_train_loss = torch.stack([x['loss'] for x in training_step_outputs]).mean()
+        return {
+            'log': {'loss/train': mean_train_loss, 'step': self.current_epoch},
+            'progress_bar': {'loss/train': mean_train_loss}
+        }
 
     def val_dataloader(self) -> DataLoader:
         validation_dataset = loader.CNNLoader(path_to_csv='dataset/gttp_valid.csv')
@@ -206,8 +213,14 @@ class PointerGenerator(LightningModule):
 
         batch_loss /= len(batch_orig)
 
-        logs = {'val_loss': batch_loss.detach().item()}
-        return {'val_loss': batch_loss, 'log': logs}
+        return {'loss': batch_loss}
+
+    def validation_epoch_end(self, validation_step_outputs):
+        mean_validation_loss = torch.stack([x['loss'] for x in validation_step_outputs]).mean()
+        return {
+            'log': {'loss/validation': mean_validation_loss, 'step': self.current_epoch},
+            'progress_bar': {'loss/validation': mean_validation_loss}
+        }
 
     def forward(self, orig_text: str, **kwargs) -> Union:
         orig_tokens = helper.tokenize_en(orig_text, lowercase=True)
