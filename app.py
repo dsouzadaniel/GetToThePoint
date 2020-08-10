@@ -6,7 +6,7 @@ from gttp_lightning import PointerGenerator
 
 @st.cache(allow_output_mutation=True)
 def load_model_for_app():
-    pretrained_model = PointerGenerator.load_from_checkpoint(checkpoint_path='epoch=0.ckpt')
+    pretrained_model = PointerGenerator.load_from_checkpoint(checkpoint_path='epoch=7.ckpt')
     pretrained_model.eval()
     pretrained_model.freeze()
     return pretrained_model
