@@ -127,7 +127,7 @@ sphinxcontrib-qthelp==1.0.3
 sphinxcontrib-serializinghtml==1.1.4
 sqlparse==0.3.1
 srsly==1.0.2
-streamlit==0.64.0
+streamlit==1.11.1
 tensorboard==2.3.0
 tensorboard-plugin-wit==1.7.0
 tensorboardX==2.0
